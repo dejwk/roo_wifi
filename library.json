@@ -1,0 +1,39 @@
+{
+    "name": "roo_wifi",
+    "description": "WiFi controller library for ESP32, supporting storing persistent configuration in flash, and abstracting away the architecture.",
+    "keywords": [
+        "WiFi"
+    ],
+    "authors": [
+        {
+            "name": "Dejwk",
+            "email": "dejwk.oss@gmail.com",
+            "maintainer": true
+        }
+    ],
+    "repository": {
+        "type": "git",
+        "url": "https://github.com/dejwk/roo_wifi"
+    },
+    "version": "1.0.0",
+    "homepage": "https://github.com/dejwk/roo_wifi",
+    "frameworks": [
+        "Arduino"
+    ],
+    "build": {
+        "srcDir": "src",
+        "srcFilter": "+<*> -<examples> -<benchmarks> -<doc> -<test>"
+    },
+    "examples": [
+        "examples/**/*.ino"
+    ],
+    "dependencies": {
+        "Preferences": ">0",
+        "WiFi": ">0",
+        "dejwk/roo_collections": ">=1.1.6",
+        "dejwk/roo_logging": ">=1.0.4",
+        "dejwk/roo_prefs": ">0",
+        "dejwk/roo_scheduler": ">=1.2.0",
+        "dejwk/roo_time": ">0"
+    }
+}
