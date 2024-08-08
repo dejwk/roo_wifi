@@ -7,7 +7,7 @@ namespace roo_wifi {
 
 class ArduinoPreferencesStore : public Store {
  public:
-  ArduinoPreferencesStore() : collection_("roo/t/wifi") {}
+  ArduinoPreferencesStore() : collection_("roo/wifi") {}
 
   void begin() {}
 
