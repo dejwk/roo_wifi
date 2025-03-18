@@ -7,7 +7,7 @@ namespace roo_wifi {
 
 class ArduinoPreferencesStore : public Store {
  public:
-  ArduinoPreferencesStore() : collection_("roo/wifi") {}
+  ArduinoPreferencesStore();
 
   void begin() {}
 
@@ -23,13 +23,14 @@ class ArduinoPreferencesStore : public Store {
 
   bool getPassword(const std::string& ssid, std::string& password) override;
 
-  void setPassword(const std::string& ssid,
-                   const std::string& password) override;
+  void setPassword(const std::string& ssid, roo::string_view password) override;
 
   void clearPassword(const std::string& ssid) override;
 
  private:
   roo_prefs::Collection collection_;
+  roo_prefs::Bool is_interface_enabled_;
+  roo_prefs::String default_ssid_;
 };
 
 }  // namespace roo_wifi

@@ -29,60 +29,53 @@ void ToSsiPwdKey(const std::string& ssid, char* result) {
 
 }  // namespace
 
+ArduinoPreferencesStore::ArduinoPreferencesStore()
+    : collection_("roo/wifi"),
+      is_interface_enabled_(collection_, "enabled", false),
+      default_ssid_(collection_, "ssid", "") {}
+
 bool ArduinoPreferencesStore::getIsInterfaceEnabled() {
-  roo_prefs::Transaction t(collection_, true);
-  return t.store().getBool("enabled", false);
+  return is_interface_enabled_.get();
 }
 
 void ArduinoPreferencesStore::setIsInterfaceEnabled(bool enabled) {
-  roo_prefs::Transaction t(collection_);
-  t.store().putBool("enabled", enabled);
+  is_interface_enabled_.set(enabled);
 }
 
 std::string ArduinoPreferencesStore::getDefaultSSID() {
-  roo_prefs::Transaction t(collection_, true);
-  if (!t.store().isKey("ssid")) {
-    return "";
-  }
-  char buf[33];
-  t.store().getString("ssid", buf, 33);
-  return std::string(buf);
+  return default_ssid_.get();
 }
 
 void ArduinoPreferencesStore::setDefaultSSID(const std::string& ssid) {
-  roo_prefs::Transaction t(collection_);
-  t.store().putString("ssid", ssid.c_str());
+  default_ssid_.set(ssid);
 }
 
 void ArduinoPreferencesStore::clearDefaultSSID() {
   roo_prefs::Transaction t(collection_);
-  t.store().remove("ssid");
+  t.store().clear("ssid");
 }
 
-bool ArduinoPreferencesStore::getPassword(const std::string& ssid, std::string& password) {
+bool ArduinoPreferencesStore::getPassword(const std::string& ssid,
+                                          std::string& password) {
   roo_prefs::Transaction t(collection_, true);
   char pwkey[16];
   ToSsiPwdKey(ssid, pwkey);
-  if (!t.store().isKey(pwkey)) return false;
-  char pwd[128];
-  size_t len = t.store().getString(pwkey, pwd, 128);
-  password = std::string(pwd, len);
-  return true;
+  return (t.store().readString(pwkey, password) == roo_prefs::READ_OK);
 }
 
 void ArduinoPreferencesStore::setPassword(const std::string& ssid,
-                               const std::string& password) {
+                                          roo::string_view password) {
   roo_prefs::Transaction t(collection_);
   char pwkey[16];
   ToSsiPwdKey(ssid, pwkey);
-  t.store().putString(pwkey, password.c_str());
+  t.store().writeString(pwkey, password);
 }
 
 void ArduinoPreferencesStore::clearPassword(const std::string& ssid) {
   roo_prefs::Transaction t(collection_);
   char pwkey[16];
   ToSsiPwdKey(ssid, pwkey);
-  t.store().remove(pwkey);
+  t.store().clear(pwkey);
 }
 
 }  // namespace roo_wifi
