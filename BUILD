@@ -17,12 +17,8 @@ cc_library(
         "ESP32",
     ],
     deps = [
-        "//roo_testing/frameworks/arduino-esp32-2.0.4/libraries/Preferences",
-        "//roo_testing/frameworks/arduino-esp32-2.0.4/libraries/WiFi",
-        "//lib/roo_collections",
-        "//lib/roo_logging",
-        "//lib/roo_prefs",
-        "//lib/roo_scheduler",
-        "//lib/roo_time",
+        "@roo_collections",
+        "@roo_prefs",
+        "@roo_testing//roo_testing/frameworks/arduino-esp32-2.0.4/libraries/WiFi",
     ],
 )
