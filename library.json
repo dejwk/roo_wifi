@@ -28,7 +28,7 @@
         "examples/**/*.ino"
     ],
     "dependencies": {
-        "dejwk/roo_collections": ">=1.4.0",
-        "dejwk/roo_prefs": ">=1.2.7"
+        "dejwk/roo_collections": ">=1.4.1",
+        "dejwk/roo_prefs": ">=1.2.8"
     }
 }
