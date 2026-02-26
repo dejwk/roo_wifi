@@ -258,7 +258,7 @@ void Controller::updateCurrentNetwork(const std::string& ssid, bool open,
   current_network_index_ = -1;
   for (size_t i = 0; i < all_networks_.size(); ++i) {
     if (all_networks_[i].ssid == ssid) {
-      current_network_index_ = i;
+      current_network_index_ = static_cast<int16_t>(i);
       break;
     }
   }
