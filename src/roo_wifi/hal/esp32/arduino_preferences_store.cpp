@@ -60,7 +60,7 @@ bool ArduinoPreferencesStore::getPassword(const std::string& ssid,
   roo_prefs::Transaction t(collection_, true);
   char pwkey[16];
   ToSsiPwdKey(ssid, pwkey);
-  return (t.store().readString(pwkey, password) == roo_prefs::READ_OK);
+  return (t.store().readString(pwkey, password) == roo_prefs::ReadResult::kOk);
 }
 
 void ArduinoPreferencesStore::setPassword(const std::string& ssid,
