@@ -13,8 +13,10 @@
 
 namespace roo_wifi {
 
+/// High-level Wi-Fi controller that manages scanning and connections.
 class Controller {
  public:
+  /// Summary of a scanned network.
   struct Network {
     Network() : ssid(), open(false), rssi(-128) {}
 
@@ -23,6 +25,7 @@ class Controller {
     int8_t rssi;
   };
 
+  /// Listener for controller events.
   class Listener {
    public:
     Listener() = default;
@@ -38,52 +41,76 @@ class Controller {
     friend class Controller;
   };
 
+  /// Creates a controller using the provided store, interface, and scheduler.
   Controller(Store& store, Interface& interface,
              roo_scheduler::Scheduler& scheduler);
 
+  /// Destroys the controller and detaches listeners.
   ~Controller();
 
+  /// Initializes the controller and registers for interface events.
   void begin();
 
+  /// Adds a listener for controller events.
   void addListener(Listener* listener);
 
+  /// Removes a previously added listener.
   void removeListener(Listener* listener);
 
+  /// Returns the number of non-current networks in the scan list.
   int otherScannedNetworksCount() const;
 
+  /// Returns the current network (may be empty if disconnected).
   const Network& currentNetwork() const;
 
+  /// Returns a network by SSID, or nullptr if not found.
   const Network* lookupNetwork(const std::string& ssid) const;
 
+  /// Returns the connection status of the current network.
   ConnectionStatus currentNetworkStatus() const;
 
+  /// Returns the ith non-current network in the scan list.
   const Network& otherNetwork(int idx) const;
 
+  /// Starts a scan. Returns false if a scan could not be started.
   bool startScan();
 
+  /// Returns true when the current scan has completed.
   bool isScanCompleted() const { return interface_.scanCompleted(); }
+  /// Returns true when the interface is enabled.
   bool isEnabled() const { return enabled_; }
 
+  /// Returns true when a connection is in progress.
   bool isConnecting() const { return connecting_; }
 
+  /// Toggles the enabled/disabled state and persists it in the store.
   void toggleEnabled();
 
+  /// Notifies listeners that enable state changed.
   void notifyEnableChanged();
 
+  /// Looks up a stored password for the given SSID.
   bool getStoredPassword(const std::string& ssid, std::string& passwd) const;
 
+  /// Temporarily disables periodic refresh and event processing.
   void pause();
 
+  /// Resumes periodic refresh and event processing.
   void resume();
 
+  /// Stores a password for the given SSID.
   void setPassword(const std::string& ssid, const std::string& passwd);
 
+  /// Connects using stored SSID/password values.
   bool connect();
 
+  /// Connects to the specified SSID/password.
   bool connect(const std::string& ssid, const std::string& passwd);
 
+  /// Disconnects the current connection.
   void disconnect();
 
+  /// Forgets the password and SSID association.
   void forget(const std::string& ssid);
 
  private:

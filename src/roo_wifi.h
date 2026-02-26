@@ -1,10 +1,14 @@
 #pragma once
 
+/// Umbrella header for the roo_wifi module.
+///
+/// Provides Wi-Fi controller interfaces and platform adapters.
+
 #include "roo_scheduler.h"
 #include "roo_wifi/controller.h"
 #include "roo_wifi/hal/interface.h"
 
-// Must be included after the <Arduino.h> header.
+/// Must be included after `<Arduino.h>`.
 
 #ifdef ESP32
 
@@ -13,6 +17,7 @@
 
 namespace roo_wifi {
 
+/// ESP32 Wi-Fi controller convenience wrapper.
 class Esp32Wifi : public Controller {
  public:
   Esp32Wifi(roo_scheduler::Scheduler& scheduler)

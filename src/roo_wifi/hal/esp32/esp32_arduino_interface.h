@@ -11,6 +11,7 @@ namespace roo_wifi {
 
 namespace internal {
 
+/// Linked list node storing a native ESP32 event callback.
 struct Esp32ListenerListNode {
   std::function<void(arduino_event_id_t event, arduino_event_info_t info)>
       notify_fn;
@@ -25,31 +26,42 @@ struct Esp32ListenerListNode {
 
 }  // namespace internal
 
+/// ESP32 Arduino Wi-Fi interface implementation.
 class Esp32ArduinoInterface : public Interface {
  public:
   Esp32ArduinoInterface();
 
   ~Esp32ArduinoInterface();
 
+  /// Initializes the underlying Wi-Fi stack and registers callbacks.
   void begin();
 
+  /// Returns current AP information; false if not connected.
   bool getApInfo(NetworkDetails* info) const override;
 
+  /// Starts a scan.
   bool startScan() override;
 
+  /// Returns true if the scan has completed.
   bool scanCompleted() const override;
 
+  /// Returns scan results, up to max_count entries.
   bool getScanResults(std::vector<NetworkDetails>* list,
                       int max_count) const override;
 
+  /// Disconnects from the current network.
   void disconnect() override;
 
+  /// Connects to the specified SSID/password.
   bool connect(const std::string& ssid, const std::string& passwd) override;
 
+  /// Returns the current connection status.
   ConnectionStatus getStatus() override;
 
+  /// Registers an interface event listener.
   void addEventListener(EventListener* listener) override;
 
+  /// Unregisters an interface event listener.
   void removeEventListener(EventListener* listener) override;
 
  private:

@@ -1,40 +1,44 @@
 #pragma once
 
 #include <inttypes.h>
+
 #include <string>
 #include <vector>
 
 namespace roo_wifi {
 
+/// Wi-Fi authentication modes.
 enum AuthMode {
-  WIFI_AUTH_OPEN = 0,        /**< authenticate mode : open */
-  WIFI_AUTH_WEP,             /**< authenticate mode : WEP */
-  WIFI_AUTH_WPA_PSK,         /**< authenticate mode : WPA_PSK */
-  WIFI_AUTH_WPA2_PSK,        /**< authenticate mode : WPA2_PSK */
-  WIFI_AUTH_WPA_WPA2_PSK,    /**< authenticate mode : WPA_WPA2_PSK */
-  WIFI_AUTH_WPA2_ENTERPRISE, /**< authenticate mode : WPA2_ENTERPRISE */
-  WIFI_AUTH_WPA3_PSK,        /**< authenticate mode : WPA3_PSK */
-  WIFI_AUTH_WPA2_WPA3_PSK,   /**< authenticate mode : WPA2_WPA3_PSK */
-  WIFI_AUTH_WAPI_PSK,        /**< authenticate mode : WAPI_PSK */
-  WIFI_AUTH_UNKNOWN
+  WIFI_AUTH_OPEN = 0,         ///< Open.
+  WIFI_AUTH_WEP,              ///< WEP.
+  WIFI_AUTH_WPA_PSK,          ///< WPA-PSK.
+  WIFI_AUTH_WPA2_PSK,         ///< WPA2-PSK.
+  WIFI_AUTH_WPA_WPA2_PSK,     ///< WPA/WPA2-PSK.
+  WIFI_AUTH_WPA2_ENTERPRISE,  ///< WPA2-Enterprise.
+  WIFI_AUTH_WPA3_PSK,         ///< WPA3-PSK.
+  WIFI_AUTH_WPA2_WPA3_PSK,    ///< WPA2/WPA3-PSK.
+  WIFI_AUTH_WAPI_PSK,         ///< WAPI-PSK.
+  WIFI_AUTH_UNKNOWN           ///< Unknown.
 };
 
+/// Wi-Fi cipher types.
 enum CipherType {
-  WIFI_CIPHER_TYPE_NONE = 0,    /**< the cipher type is none */
-  WIFI_CIPHER_TYPE_WEP40,       /**< the cipher type is WEP40 */
-  WIFI_CIPHER_TYPE_WEP104,      /**< the cipher type is WEP104 */
-  WIFI_CIPHER_TYPE_TKIP,        /**< the cipher type is TKIP */
-  WIFI_CIPHER_TYPE_CCMP,        /**< the cipher type is CCMP */
-  WIFI_CIPHER_TYPE_TKIP_CCMP,   /**< the cipher type is TKIP and CCMP */
-  WIFI_CIPHER_TYPE_AES_CMAC128, /**< the cipher type is AES-CMAC-128 */
-  WIFI_CIPHER_TYPE_SMS4,        /**< the cipher type is SMS4 */
-  WIFI_CIPHER_TYPE_GCMP,        /**< the cipher type is GCMP */
-  WIFI_CIPHER_TYPE_GCMP256,     /**< the cipher type is GCMP-256 */
-  WIFI_CIPHER_TYPE_AES_GMAC128, /**< the cipher type is AES-GMAC-128 */
-  WIFI_CIPHER_TYPE_AES_GMAC256, /**< the cipher type is AES-GMAC-256 */
-  WIFI_CIPHER_TYPE_UNKNOWN,     /**< the cipher type is unknown */
+  WIFI_CIPHER_TYPE_NONE = 0,     ///< None.
+  WIFI_CIPHER_TYPE_WEP40,        ///< WEP40.
+  WIFI_CIPHER_TYPE_WEP104,       ///< WEP104.
+  WIFI_CIPHER_TYPE_TKIP,         ///< TKIP.
+  WIFI_CIPHER_TYPE_CCMP,         ///< CCMP.
+  WIFI_CIPHER_TYPE_TKIP_CCMP,    ///< TKIP+CCMP.
+  WIFI_CIPHER_TYPE_AES_CMAC128,  ///< AES-CMAC-128.
+  WIFI_CIPHER_TYPE_SMS4,         ///< SMS4.
+  WIFI_CIPHER_TYPE_GCMP,         ///< GCMP.
+  WIFI_CIPHER_TYPE_GCMP256,      ///< GCMP-256.
+  WIFI_CIPHER_TYPE_AES_GMAC128,  ///< AES-GMAC-128.
+  WIFI_CIPHER_TYPE_AES_GMAC256,  ///< AES-GMAC-256.
+  WIFI_CIPHER_TYPE_UNKNOWN,      ///< Unknown.
 };
 
+/// Wi-Fi connection status.
 enum ConnectionStatus {
   WL_IDLE_STATUS = 0,
   WL_NO_SSID_AVAIL = 1,
@@ -45,14 +49,15 @@ enum ConnectionStatus {
   WL_DISCONNECTED = 6
 };
 
+/// Detailed network information reported by the interface.
 struct NetworkDetails {
-  uint8_t bssid[6];           /**< MAC address of AP */
-  uint8_t ssid[33];           /**< SSID of AP */
-  uint8_t primary;            /**< channel of AP */
-  int8_t rssi;                /**< signal strength of AP */
-  AuthMode authmode;          /**< authmode of AP */
-  CipherType pairwise_cipher; /**< pairwise cipher of AP */
-  CipherType group_cipher;    /**< group cipher of AP */
+  uint8_t bssid[6];            ///< MAC address of AP.
+  uint8_t ssid[33];            ///< SSID of AP.
+  uint8_t primary;             ///< Channel of AP.
+  int8_t rssi;                 ///< Signal strength of AP.
+  AuthMode authmode;           ///< Auth mode of AP.
+  CipherType pairwise_cipher;  ///< Pairwise cipher of AP.
+  CipherType group_cipher;     ///< Group cipher of AP.
   bool use_11b;
   bool use_11g;
   bool use_11n;
@@ -61,9 +66,10 @@ struct NetworkDetails {
   ConnectionStatus status;
 };
 
-// Abstraction for interacting with the hardware WiFi interface.
+/// Abstraction for interacting with the hardware Wi-Fi interface.
 class Interface {
  public:
+  /// Interface event types.
   enum EventType {
     EV_UNKNOWN = 0,
     EV_SCAN_COMPLETED = 1,
@@ -74,25 +80,36 @@ class Interface {
     EV_CONNECTION_LOST = 6,
   };
 
+  /// Listener for interface events.
   class EventListener {
    public:
     virtual ~EventListener() {}
     virtual void onEvent(EventType type) {}
   };
 
+  /// Registers an interface event listener.
   virtual void addEventListener(EventListener* listener) = 0;
+  /// Unregisters an interface event listener.
   virtual void removeEventListener(EventListener* listener) = 0;
 
+  /// Returns current AP information; false if not connected.
   virtual bool getApInfo(NetworkDetails* info) const = 0;
+  /// Starts a scan.
   virtual bool startScan() = 0;
+  /// Returns true if the last scan has completed.
   virtual bool scanCompleted() const = 0;
 
+  /// Disconnects from the current network.
   virtual void disconnect() = 0;
+  /// Connects to the specified SSID/password.
   virtual bool connect(const std::string& ssid, const std::string& passwd) = 0;
+  /// Returns the current connection status.
   virtual ConnectionStatus getStatus() = 0;
 
+  /// Returns scan results, up to max_count entries.
   virtual bool getScanResults(std::vector<NetworkDetails>* list,
                               int max_count) const = 0;
+  /// Virtual destructor.
   virtual ~Interface() {}
 };
 
