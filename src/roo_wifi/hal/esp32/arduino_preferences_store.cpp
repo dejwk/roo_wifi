@@ -57,7 +57,8 @@ void ArduinoPreferencesStore::clearDefaultSSID() {
 
 bool ArduinoPreferencesStore::getPassword(const std::string& ssid,
                                           std::string& password) {
-  roo_prefs::Transaction t(collection_, true);
+  roo_prefs::Transaction t(collection_,
+                           roo_prefs::Transaction::Mode::kReadOnly);
   char pwkey[16];
   ToSsiPwdKey(ssid, pwkey);
   return (t.store().readString(pwkey, password) == roo_prefs::ReadResult::kOk);
