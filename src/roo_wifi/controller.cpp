@@ -271,16 +271,28 @@ void Controller::onScanCompleted() {
   current_network_index_ = -1;
   std::vector<NetworkDetails> raw_data;
   interface_.getScanResults(&raw_data, 100);
-  int raw_count = raw_data.size();
+  auto notify_scan_completed = [this]() {
+    for (auto& listener : model_listeners_) {
+      listener->onScanCompleted();
+    }
+    if (enabled_) {
+      start_scan_.scheduleAfter(roo_time::Seconds(15));
+    }
+  };
+  size_t raw_count = raw_data.size();
   if (raw_count == 0) {
     all_networks_.clear();
+    if (current_network_status_ == WL_DISCONNECTED) {
+      current_network_status_ = WL_NO_SSID_AVAIL;
+    }
+    notify_scan_completed();
     return;
   }
   // De-duplicate SSID, keeping the one with the strongest signal.
   // Start by sorting by (ssid, signal strength).
-  std::vector<uint8_t> indices(raw_data.size(), 0);
-  for (uint8_t i = 0; i < raw_count; ++i) indices[i] = i;
-  std::sort(&indices[0], &indices[raw_count], [&](int a, int b) -> bool {
+  std::vector<size_t> indices(raw_count, 0);
+  for (size_t i = 0; i < raw_count; ++i) indices[i] = i;
+  std::sort(indices.begin(), indices.end(), [&](size_t a, size_t b) -> bool {
     int ssid_cmp = strncmp((const char*)raw_data[a].ssid,
                            (const char*)raw_data[b].ssid, 33);
     if (ssid_cmp < 0) return true;
@@ -289,8 +301,8 @@ void Controller::onScanCompleted() {
   });
   // Now, compact the result by keeping the first value for each SSID.
   const char* current_ssid = (const char*)raw_data[indices[0]].ssid;
-  uint8_t src = 1;
-  uint8_t dst = 1;
+  size_t src = 1;
+  size_t dst = 1;
   while (src < raw_count) {
     const char* candidate_ssid = (const char*)raw_data[indices[src]].ssid;
     if (strncmp(current_ssid, candidate_ssid, 33) != 0) {
@@ -301,13 +313,14 @@ void Controller::onScanCompleted() {
   }
   // Now sort again, this time by signal strength only.
   // Single-out and remove the default network.
-  std::sort(&indices[0], &indices[dst], [&](int a, int b) -> bool {
-    return raw_data[a].rssi > raw_data[b].rssi;
-  });
+  std::sort(indices.begin(), indices.begin() + dst,
+            [&](size_t a, size_t b) -> bool {
+              return raw_data[a].rssi > raw_data[b].rssi;
+            });
   // Finally, copy over the results.
   all_networks_.resize(dst);
   bool found = false;
-  for (uint8_t i = 0; i < dst; ++i) {
+  for (size_t i = 0; i < dst; ++i) {
     NetworkDetails& src = raw_data[indices[i]];
     Network& dst = all_networks_[i];
     dst.ssid =
@@ -316,7 +329,7 @@ void Controller::onScanCompleted() {
     dst.rssi = src.rssi;
     if (dst.ssid == current_network_.ssid) {
       found = true;
-      current_network_index_ = i;
+      current_network_index_ = static_cast<int16_t>(i);
       if (current_network_status_ == WL_NO_SSID_AVAIL) {
         current_network_status_ = WL_DISCONNECTED;
       }
@@ -325,12 +338,7 @@ void Controller::onScanCompleted() {
   if (!found && current_network_status_ == WL_DISCONNECTED) {
     current_network_status_ = WL_NO_SSID_AVAIL;
   }
-  for (auto& l : model_listeners_) {
-    l->onScanCompleted();
-  };
-  if (enabled_) {
-    start_scan_.scheduleAfter(roo_time::Seconds(15));
-  }
+  notify_scan_completed();
 }
 
 }  // namespace roo_wifi
