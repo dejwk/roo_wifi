@@ -46,7 +46,12 @@ class Controller {
              roo_scheduler::Scheduler& scheduler);
 
   /// Destroys the controller and detaches listeners.
-  ~Controller();
+  virtual ~Controller();
+
+  Controller(const Controller&) = delete;
+  Controller& operator=(const Controller&) = delete;
+  Controller(Controller&&) = delete;
+  Controller& operator=(Controller&&) = delete;
 
   /// Initializes the controller and registers for interface events.
   void begin();
@@ -113,6 +118,13 @@ class Controller {
   /// Forgets the password and SSID association.
   void forget(const std::string& ssid);
 
+ protected:
+  /// Stops controller activity and detaches the interface listener.
+  ///
+  /// Safe to call more than once. Derived classes that own the interface must
+  /// call this before destroying it.
+  void shutdown();
+
  private:
   class WifiListener : public Interface::EventListener {
    public:
@@ -158,6 +170,7 @@ class Controller {
   WifiListener wifi_listener_;
   roo_collections::FlatSmallHashSet<Listener*> model_listeners_;
   bool connecting_;
+  bool listener_attached_;
 
   roo_scheduler::SingletonTask start_scan_;
   roo_scheduler::SingletonTask refresh_current_network_;

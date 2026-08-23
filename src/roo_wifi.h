@@ -23,6 +23,13 @@ class Esp32Wifi : public Controller {
   Esp32Wifi(roo_scheduler::Scheduler& scheduler)
       : Controller(store_, interface_, scheduler), store_(), interface_() {}
 
+  ~Esp32Wifi() override { shutdown(); }
+
+  Esp32Wifi(const Esp32Wifi&) = delete;
+  Esp32Wifi& operator=(const Esp32Wifi&) = delete;
+  Esp32Wifi(Esp32Wifi&&) = delete;
+  Esp32Wifi& operator=(Esp32Wifi&&) = delete;
+
   void begin() {
     store_.begin();
     interface_.begin();

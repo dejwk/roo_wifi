@@ -13,6 +13,8 @@ namespace roo_wifi {
 /// Abstraction for persistently storing Wi-Fi controller data.
 class Store {
  public:
+  virtual ~Store() = default;
+
   /// Returns whether the Wi-Fi interface is enabled.
   virtual bool getIsInterfaceEnabled() = 0;
   /// Sets whether the Wi-Fi interface is enabled.

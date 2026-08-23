@@ -35,14 +35,27 @@ Controller::Controller(Store& store, Interface& interface,
       wifi_listener_(*this),
       model_listeners_(),
       connecting_(false),
+      listener_attached_(false),
       start_scan_(scheduler, [this]() { startScan(); }),
       refresh_current_network_(scheduler,
                                [this]() { periodicRefreshCurrentNetwork(); }) {}
 
-Controller::~Controller() { interface_.removeEventListener(&wifi_listener_); }
+Controller::~Controller() { shutdown(); }
+
+void Controller::shutdown() {
+  start_scan_.cancel();
+  refresh_current_network_.cancel();
+  if (listener_attached_) {
+    interface_.removeEventListener(&wifi_listener_);
+    listener_attached_ = false;
+  }
+}
 
 void Controller::begin() {
-  interface_.addEventListener(&wifi_listener_);
+  if (!listener_attached_) {
+    interface_.addEventListener(&wifi_listener_);
+    listener_attached_ = true;
+  }
   enabled_ = store_.getIsInterfaceEnabled();
   if (enabled_) notifyEnableChanged();
   std::string ssid = store_.getDefaultSSID();
