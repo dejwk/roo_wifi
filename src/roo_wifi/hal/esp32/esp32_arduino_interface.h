@@ -3,28 +3,12 @@
 #include "WiFi.h"
 #include "roo_collections.h"
 #include "roo_scheduler.h"
+#include "roo_threads.h"
 #include "roo_wifi/hal/esp32/arduino_preferences_store.h"
 #include "roo_wifi/hal/interface.h"
 #include "roo_wifi/hal/store.h"
 
 namespace roo_wifi {
-
-namespace internal {
-
-/// Linked list node storing a native ESP32 event callback.
-struct Esp32ListenerListNode {
-  std::function<void(arduino_event_id_t event, arduino_event_info_t info)>
-      notify_fn;
-  Esp32ListenerListNode* next;
-  Esp32ListenerListNode* prev;
-
-  Esp32ListenerListNode(
-      std::function<void(arduino_event_id_t event, arduino_event_info_t info)>
-          notify_fn)
-      : notify_fn(notify_fn), next(nullptr), prev(nullptr) {}
-};
-
-}  // namespace internal
 
 /// ESP32 Arduino Wi-Fi interface implementation.
 class Esp32ArduinoInterface : public Interface {
@@ -32,6 +16,11 @@ class Esp32ArduinoInterface : public Interface {
   Esp32ArduinoInterface();
 
   ~Esp32ArduinoInterface();
+
+  Esp32ArduinoInterface(const Esp32ArduinoInterface&) = delete;
+  Esp32ArduinoInterface& operator=(const Esp32ArduinoInterface&) = delete;
+  Esp32ArduinoInterface(Esp32ArduinoInterface&&) = delete;
+  Esp32ArduinoInterface& operator=(Esp32ArduinoInterface&&) = delete;
 
   /// Initializes the underlying Wi-Fi stack and registers callbacks.
   void begin();
@@ -64,12 +53,16 @@ class Esp32ArduinoInterface : public Interface {
   /// Unregisters an interface event listener.
   void removeEventListener(EventListener* listener) override;
 
- private:
+  /// Dispatches a native Arduino Wi-Fi event to registered listeners.
+  ///
+  /// This is public solely for the process-wide Arduino callback.
   void dispatchEvent(WiFiEvent_t event, WiFiEventInfo_t info);
 
-  internal::Esp32ListenerListNode event_relay_;
+ private:
   roo_collections::FlatSmallHashSet<EventListener*> listeners_;
+  roo::mutex listeners_mutex_;
 
+  bool attached_;
   bool scanning_;
 };
 

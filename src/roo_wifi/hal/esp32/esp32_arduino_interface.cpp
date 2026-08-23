@@ -26,38 +26,14 @@ static AuthMode authMode(wifi_auth_mode_t mode) {
   }
 }
 
-internal::Esp32ListenerListNode* head = nullptr;
-
-void attach(internal::Esp32ListenerListNode* n) {
-  if (head == nullptr) {
-    n->next = n->prev = n;
-  } else {
-    n->next = head->next;
-    n->prev = head;
-    head->next->prev = n;
-    head->next = n;
-  }
-  head = n;
-}
-
-void detach(internal::Esp32ListenerListNode* n) {
-  internal::Esp32ListenerListNode* new_head = nullptr;
-  if (n->next != n->prev) {
-    n->next->prev = n->prev;
-    n->prev->next = n->next;
-    new_head = n->next;
-  }
-  n->next = n->prev = nullptr;
-  head = new_head;
-}
+roo::mutex interfaces_mutex;
+roo_collections::FlatSmallHashSet<Esp32ArduinoInterface*> interfaces;
 
 void dispatch(arduino_event_id_t event, arduino_event_info_t info) {
-  if (head == nullptr) return;
-  auto n = head;
-  do {
-    n->notify_fn(event, info);
-    n = n->next;
-  } while (n != head);
+  roo::lock_guard<roo::mutex> lock(interfaces_mutex);
+  for (Esp32ArduinoInterface* interface : interfaces) {
+    interface->dispatchEvent(event, info);
+  }
 }
 
 void init() {
@@ -69,18 +45,28 @@ void init() {
 }  // namespace
 
 Esp32ArduinoInterface::Esp32ArduinoInterface()
-    : event_relay_([&](arduino_event_id_t event, arduino_event_info_t info) {
-        dispatchEvent(event, info);
-      }),
+    : listeners_(),
+      listeners_mutex_(),
+      attached_(false),
       scanning_(false) {}
 
 Esp32ArduinoInterface::~Esp32ArduinoInterface() {
-  detach(&event_relay_);
+  roo::lock_guard<roo::mutex> lock(interfaces_mutex);
+  if (attached_) {
+    interfaces.erase(this);
+    attached_ = false;
+  }
 }
 
 void Esp32ArduinoInterface::begin() {
   init();
-  attach(&event_relay_);
+  {
+    roo::lock_guard<roo::mutex> lock(interfaces_mutex);
+    if (!attached_) {
+      interfaces.insert(this);
+      attached_ = true;
+    }
+  }
   WiFi.mode(WIFI_STA);
   // // #ifdef ESP32
   // WiFi.onEvent(
@@ -164,10 +150,12 @@ ConnectionStatus Esp32ArduinoInterface::getStatus() {
 }
 
 void Esp32ArduinoInterface::addEventListener(EventListener* listener) {
+  roo::lock_guard<roo::mutex> lock(listeners_mutex_);
   listeners_.insert(listener);
 }
 
 void Esp32ArduinoInterface::removeEventListener(EventListener* listener) {
+  roo::lock_guard<roo::mutex> lock(listeners_mutex_);
   listeners_.erase(listener);
 }
 
@@ -204,6 +192,7 @@ void Esp32ArduinoInterface::dispatchEvent(arduino_event_id_t event, arduino_even
   if (type == Interface::EV_SCAN_COMPLETED) {
     scanning_ = false;
   }
+  roo::lock_guard<roo::mutex> lock(listeners_mutex_);
   for (const auto& l : listeners_) {
     l->onEvent(type);
   }
