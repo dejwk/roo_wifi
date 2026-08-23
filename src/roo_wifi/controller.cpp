@@ -27,6 +27,8 @@ Controller::Controller(Store& store, Interface& interface,
                        roo_scheduler::Scheduler& scheduler)
     : store_(store),
       interface_(interface),
+      scheduler_(scheduler),
+      event_dispatch_state_(std::make_shared<EventDispatchState>(this)),
       enabled_(false),
       current_network_(),
       current_network_index_(-1),
@@ -43,11 +45,36 @@ Controller::Controller(Store& store, Interface& interface,
 Controller::~Controller() { shutdown(); }
 
 void Controller::shutdown() {
+  {
+    roo::lock_guard<roo::mutex> lock(event_dispatch_state_->mutex);
+    event_dispatch_state_->controller = nullptr;
+  }
   start_scan_.cancel();
   refresh_current_network_.cancel();
   if (listener_attached_) {
     interface_.removeEventListener(&wifi_listener_);
     listener_attached_ = false;
+  }
+}
+
+void Controller::enqueueInterfaceEvent(Interface::EventType type) {
+  std::shared_ptr<EventDispatchState> state = event_dispatch_state_;
+  scheduler_.scheduleNow([state, type]() {
+    roo::lock_guard<roo::mutex> lock(state->mutex);
+    if (state->controller != nullptr) {
+      state->controller->onInterfaceEvent(type);
+    }
+  });
+}
+
+void Controller::onInterfaceEvent(Interface::EventType type) {
+  switch (type) {
+    case Interface::EV_SCAN_COMPLETED:
+      onScanCompleted();
+      break;
+    default:
+      onConnectionStateChanged(type);
+      break;
   }
 }
 

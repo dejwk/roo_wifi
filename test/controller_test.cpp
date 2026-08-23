@@ -99,6 +99,7 @@ TEST(ControllerTest, EmptyScanStillNotifiesCompletion) {
   controller.toggleEnabled();
   ASSERT_EQ(listener.scan_started, 1);
   interface.completeScan();
+  scheduler.executeEligibleTasks();
 
   EXPECT_EQ(listener.scan_completed, 1);
   EXPECT_EQ(controller.otherScannedNetworksCount(), 0);
@@ -116,6 +117,7 @@ TEST(ControllerTest, NonEmptyScanSortsAndDeduplicatesNetworks) {
 
   controller.toggleEnabled();
   interface.completeScan();
+  scheduler.executeEligibleTasks();
 
   ASSERT_EQ(controller.otherScannedNetworksCount(), 2);
   EXPECT_EQ(controller.otherNetwork(0).ssid, "Roo Guest");

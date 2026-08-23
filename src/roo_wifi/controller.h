@@ -3,11 +3,13 @@
 #include <inttypes.h>
 
 #include <algorithm>
+#include <memory>
 #include <string>
 #include <vector>
 
 #include "roo_collections/flat_small_hash_set.h"
 #include "roo_scheduler.h"
+#include "roo_threads.h"
 #include "roo_wifi/hal/interface.h"
 #include "roo_wifi/hal/store.h"
 
@@ -131,16 +133,7 @@ class Controller {
     WifiListener(Controller& wifi) : wifi_(wifi) {}
 
     void onEvent(Interface::EventType type) {
-      switch (type) {
-        case Interface::EV_SCAN_COMPLETED: {
-          wifi_.onScanCompleted();
-          break;
-        }
-        default: {
-          wifi_.onConnectionStateChanged(type);
-          break;
-        }
-      }
+      wifi_.enqueueInterfaceEvent(type);
     }
 
    private:
@@ -148,6 +141,16 @@ class Controller {
   };
 
   friend class WifiListener;
+
+  struct EventDispatchState {
+    explicit EventDispatchState(Controller* controller) : controller(controller) {}
+
+    roo::mutex mutex;
+    Controller* controller;
+  };
+
+  void enqueueInterfaceEvent(Interface::EventType type);
+  void onInterfaceEvent(Interface::EventType type);
 
   void onConnectionStateChanged(Interface::EventType type);
 
@@ -162,6 +165,8 @@ class Controller {
 
   Store& store_;
   Interface& interface_;
+  roo_scheduler::Scheduler& scheduler_;
+  std::shared_ptr<EventDispatchState> event_dispatch_state_;
   bool enabled_;
   Network current_network_;
   int16_t current_network_index_;
