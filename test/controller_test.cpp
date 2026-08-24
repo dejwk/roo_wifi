@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cstring>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include "gtest/gtest.h"
@@ -21,13 +22,21 @@ class FakeStore : public roo_wifi::Store {
     default_ssid_ = ssid;
   }
   void clearDefaultSSID() override { default_ssid_.clear(); }
-  bool getPassword(const std::string&, std::string&) override { return false; }
-  void setPassword(const std::string&, roo::string_view) override {}
-  void clearPassword(const std::string&) override {}
+  bool getPassword(const std::string& ssid, std::string& password) override {
+    auto itr = passwords_.find(ssid);
+    if (itr == passwords_.end()) return false;
+    password = itr->second;
+    return true;
+  }
+  void setPassword(const std::string& ssid, roo::string_view password) override {
+    passwords_[ssid] = std::string(password.data(), password.size());
+  }
+  void clearPassword(const std::string& ssid) override { passwords_.erase(ssid); }
 
  private:
   bool enabled_ = false;
   std::string default_ssid_;
+  std::unordered_map<std::string, std::string> passwords_;
 };
 
 class FakeInterface : public roo_wifi::Interface {
@@ -40,12 +49,18 @@ class FakeInterface : public roo_wifi::Interface {
   }
   bool getApInfo(roo_wifi::NetworkDetails*) const override { return false; }
   bool startScan() override {
+    ++start_scan_calls;
     scan_completed_ = false;
     return true;
   }
   bool scanCompleted() const override { return scan_completed_; }
   void disconnect() override {}
-  bool connect(const std::string&, const std::string&) override { return true; }
+  bool connect(const std::string& ssid, const std::string& password) override {
+    ++connect_calls;
+    last_ssid = ssid;
+    last_password = password;
+    return connect_result;
+  }
   roo_wifi::ConnectionStatus getStatus() override {
     return roo_wifi::WL_DISCONNECTED;
   }
@@ -71,6 +86,14 @@ class FakeInterface : public roo_wifi::Interface {
     scan_completed_ = true;
     listener_->onEvent(EV_SCAN_COMPLETED);
   }
+
+  void emit(EventType type) { listener_->onEvent(type); }
+
+  bool connect_result = true;
+  int start_scan_calls = 0;
+  int connect_calls = 0;
+  std::string last_ssid;
+  std::string last_password;
 
  private:
   EventListener* listener_ = nullptr;
@@ -126,6 +149,55 @@ TEST(ControllerTest, NonEmptyScanSortsAndDeduplicatesNetworks) {
   EXPECT_EQ(controller.otherNetwork(1).ssid, "Roo Secure");
   EXPECT_EQ(controller.otherNetwork(1).rssi, -70);
   EXPECT_FALSE(controller.otherNetwork(1).open);
+}
+
+TEST(ControllerTest, EnabledControllerStartsScanAndReconnectsAtBoot) {
+  FakeStore store;
+  store.setIsInterfaceEnabled(true);
+  store.setDefaultSSID("Roo Secure");
+  store.setPassword("Roo Secure", "secret");
+  FakeInterface interface;
+  roo_scheduler::Scheduler scheduler;
+  roo_wifi::Controller controller(store, interface, scheduler);
+
+  controller.begin();
+
+  EXPECT_EQ(interface.connect_calls, 1);
+  EXPECT_EQ(interface.last_ssid, "Roo Secure");
+  EXPECT_EQ(interface.last_password, "secret");
+  EXPECT_EQ(interface.start_scan_calls, 1);
+}
+
+TEST(ControllerTest, FailedConnectionDoesNotReplaceStoredProfile) {
+  FakeStore store;
+  FakeInterface interface;
+  roo_scheduler::Scheduler scheduler;
+  roo_wifi::Controller controller(store, interface, scheduler);
+  controller.begin();
+  controller.toggleEnabled();
+  interface.connect_result = false;
+
+  EXPECT_FALSE(controller.connect("Roo Secure", "secret"));
+  EXPECT_TRUE(store.getDefaultSSID().empty());
+  std::string password;
+  EXPECT_FALSE(store.getPassword("Roo Secure", password));
+}
+
+TEST(ControllerTest, SuccessfulConnectionIsNoLongerInProgressAfterGotIp) {
+  FakeStore store;
+  FakeInterface interface;
+  roo_scheduler::Scheduler scheduler;
+  roo_wifi::Controller controller(store, interface, scheduler);
+  controller.begin();
+  controller.toggleEnabled();
+
+  ASSERT_TRUE(controller.connect("Roo Secure", "secret"));
+  ASSERT_TRUE(controller.isConnecting());
+  interface.emit(roo_wifi::Interface::EV_GOT_IP);
+  scheduler.executeEligibleTasks();
+
+  EXPECT_FALSE(controller.isConnecting());
+  EXPECT_EQ(controller.currentNetworkStatus(), roo_wifi::WL_CONNECTED);
 }
 
 }  // namespace
