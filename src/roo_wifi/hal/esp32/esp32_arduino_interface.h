@@ -66,7 +66,6 @@ class Esp32ArduinoInterface : public Interface {
   roo::mutex listeners_mutex_;
 
   bool attached_;
-  bool scanning_;
 };
 
 }  // namespace roo_wifi

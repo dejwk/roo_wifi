@@ -55,8 +55,7 @@ void init() {
 Esp32ArduinoInterface::Esp32ArduinoInterface()
     : listeners_(),
       listeners_mutex_(),
-      attached_(false),
-      scanning_(false) {}
+      attached_(false) {}
 
 Esp32ArduinoInterface::~Esp32ArduinoInterface() {
   roo::lock_guard<roo::mutex> lock(interfaces_mutex);
@@ -123,8 +122,7 @@ bool Esp32ArduinoInterface::getApInfo(NetworkDetails* info) const {
 }
 
 bool Esp32ArduinoInterface::startScan() {
-  scanning_ = (WiFi.scanNetworks(true, false) == WIFI_SCAN_RUNNING);
-  return scanning_;
+  return WiFi.scanNetworks(true, false) == WIFI_SCAN_RUNNING;
 }
 
 bool Esp32ArduinoInterface::scanCompleted() const {
@@ -234,9 +232,6 @@ Interface::EventType getEventType(arduino_event_id_t event, arduino_event_info_t
 
 void Esp32ArduinoInterface::dispatchEvent(arduino_event_id_t event, arduino_event_info_t info) {
   EventType type = getEventType(event, info);
-  if (type == Interface::EV_SCAN_COMPLETED) {
-    scanning_ = false;
-  }
   roo::lock_guard<roo::mutex> lock(listeners_mutex_);
   for (const auto& l : listeners_) {
     l->onEvent(type);
