@@ -16,6 +16,8 @@ cc_library(
     deps = [
         "@roo_collections",
         "@roo_prefs",
+        "@roo_backport",
+        "@roo_scheduler",
         "@roo_testing//roo_testing/frameworks/arduino-esp32-2.0.4/libraries/WiFi",
     ],
 )
