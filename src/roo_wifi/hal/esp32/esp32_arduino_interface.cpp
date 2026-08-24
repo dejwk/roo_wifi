@@ -1,5 +1,7 @@
 #include "esp32_arduino_interface.h"
 
+#include <algorithm>
+
 #include "WiFiGeneric.h"
 #include "WiFi.h"
 
@@ -21,6 +23,12 @@ static AuthMode authMode(wifi_auth_mode_t mode) {
       return WIFI_AUTH_WPA_WPA2_PSK;
     case ::WIFI_AUTH_WPA2_ENTERPRISE:
       return WIFI_AUTH_WPA2_ENTERPRISE;
+    case ::WIFI_AUTH_WPA3_PSK:
+      return WIFI_AUTH_WPA3_PSK;
+    case ::WIFI_AUTH_WPA2_WPA3_PSK:
+      return WIFI_AUTH_WPA2_WPA3_PSK;
+    case ::WIFI_AUTH_WAPI_PSK:
+      return WIFI_AUTH_WAPI_PSK;
     default:
       return WIFI_AUTH_UNKNOWN;
   }
@@ -60,6 +68,7 @@ Esp32ArduinoInterface::~Esp32ArduinoInterface() {
 
 void Esp32ArduinoInterface::begin() {
   init();
+  WiFi.persistent(false);
   {
     roo::lock_guard<roo::mutex> lock(interfaces_mutex);
     if (!attached_) {
@@ -67,7 +76,6 @@ void Esp32ArduinoInterface::begin() {
       attached_ = true;
     }
   }
-  WiFi.mode(WIFI_STA);
   // // #ifdef ESP32
   // WiFi.onEvent(
   //     [this](arduino_event_id_t event) {
@@ -82,12 +90,26 @@ void Esp32ArduinoInterface::begin() {
 bool Esp32ArduinoInterface::getApInfo(NetworkDetails* info) const {
   const String& ssid = WiFi.SSID();
   if (ssid.length() == 0) return false;
-  memcpy(info->ssid, ssid.c_str(), ssid.length());
-  info->ssid[ssid.length()] = 0;
-  info->authmode = WIFI_AUTH_UNKNOWN;  // authMode(WiFi.encryptionType());
+  *info = NetworkDetails{};
+  const size_t ssid_length =
+      std::min<size_t>(ssid.length(), sizeof(info->ssid) - 1);
+  memcpy(info->ssid, ssid.c_str(), ssid_length);
+  info->ssid[ssid_length] = 0;
+  info->authmode = WIFI_AUTH_UNKNOWN;
   info->rssi = WiFi.RSSI();
-  auto mac = WiFi.macAddress();
-  memcpy(info->bssid, mac.c_str(), 6);
+  const uint8_t* bssid = WiFi.BSSID();
+  if (bssid != nullptr) {
+    memcpy(info->bssid, bssid, sizeof(info->bssid));
+    const int16_t scan_count = WiFi.scanComplete();
+    for (int i = 0; i < scan_count; ++i) {
+      const uint8_t* scan_bssid = WiFi.BSSID(i);
+      if (scan_bssid != nullptr && ssid == WiFi.SSID(i) &&
+          memcmp(bssid, scan_bssid, sizeof(info->bssid)) == 0) {
+        info->authmode = authMode(WiFi.encryptionType(i));
+        break;
+      }
+    }
+  }
   info->primary = WiFi.channel();
   info->group_cipher = WIFI_CIPHER_TYPE_UNKNOWN;
   info->pairwise_cipher = WIFI_CIPHER_TYPE_UNKNOWN;
@@ -119,10 +141,16 @@ bool Esp32ArduinoInterface::getScanResults(std::vector<NetworkDetails>* list,
   }
   list->clear();
   for (int i = 0; i < max_count; ++i) {
-    NetworkDetails info;
+    NetworkDetails info = {};
     auto ssid = WiFi.SSID(i);
-    memcpy(info.ssid, ssid.c_str(), ssid.length());
-    info.ssid[ssid.length()] = 0;
+    const size_t ssid_length =
+        std::min<size_t>(ssid.length(), sizeof(info.ssid) - 1);
+    memcpy(info.ssid, ssid.c_str(), ssid_length);
+    info.ssid[ssid_length] = 0;
+    const uint8_t* bssid = WiFi.BSSID(i);
+    if (bssid != nullptr) {
+      memcpy(info.bssid, bssid, sizeof(info.bssid));
+    }
     info.authmode = authMode(WiFi.encryptionType(i));
     info.rssi = WiFi.RSSI(i);
     info.primary = WiFi.channel(i);
@@ -132,6 +160,7 @@ bool Esp32ArduinoInterface::getScanResults(std::vector<NetworkDetails>* list,
     info.use_11g = false;
     info.use_11n = false;
     info.supports_wps = false;
+    info.status = WL_SCAN_COMPLETED;
     list->push_back(std::move(info));
   }
   return true;
@@ -139,10 +168,26 @@ bool Esp32ArduinoInterface::getScanResults(std::vector<NetworkDetails>* list,
 
 void Esp32ArduinoInterface::disconnect() { WiFi.disconnect(); }
 
+void Esp32ArduinoInterface::setEnabled(bool enabled) {
+  if (enabled) {
+    WiFi.mode(WIFI_STA);
+  } else {
+    WiFi.disconnect(true, false);
+  }
+}
+
+void Esp32ArduinoInterface::clearPersistentCredentials() {
+  WiFi.mode(WIFI_STA);
+  WiFi.disconnect(true, true);
+}
+
 bool Esp32ArduinoInterface::connect(const std::string& ssid,
                                     const std::string& passwd) {
-  WiFi.begin(ssid.c_str(), passwd.c_str());
-  return true;
+  if (ssid.empty() || ssid.size() > 32 || ssid.find('\0') != std::string::npos ||
+      passwd.size() > 64 || passwd.find('\0') != std::string::npos) {
+    return false;
+  }
+  return WiFi.begin(ssid.c_str(), passwd.c_str()) != ::WL_CONNECT_FAILED;
 }
 
 ConnectionStatus Esp32ArduinoInterface::getStatus() {

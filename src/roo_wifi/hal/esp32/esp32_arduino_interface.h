@@ -53,6 +53,9 @@ class Esp32ArduinoInterface : public Interface {
   /// Unregisters an interface event listener.
   void removeEventListener(EventListener* listener) override;
 
+  void setEnabled(bool enabled) override;
+  void clearPersistentCredentials() override;
+
   /// Dispatches a native Arduino Wi-Fi event to registered listeners.
   ///
   /// This is public solely for the process-wide Arduino callback.
