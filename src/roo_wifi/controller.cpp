@@ -38,6 +38,7 @@ Controller::Controller(Store& store, Interface& interface,
       model_listeners_(),
       connecting_(false),
       listener_attached_(false),
+      paused_(true),
       start_scan_(scheduler, [this]() { startScan(); }),
       refresh_current_network_(scheduler,
                                [this]() { periodicRefreshCurrentNetwork(); }) {}
@@ -68,6 +69,7 @@ void Controller::enqueueInterfaceEvent(Interface::EventType type) {
 }
 
 void Controller::onInterfaceEvent(Interface::EventType type) {
+  if (paused_ || !enabled_) return;
   switch (type) {
     case Interface::EV_SCAN_COMPLETED:
       onScanCompleted();
@@ -84,11 +86,14 @@ void Controller::begin() {
     listener_attached_ = true;
   }
   enabled_ = store_.getIsInterfaceEnabled();
-  if (enabled_) notifyEnableChanged();
+  interface_.setEnabled(enabled_);
+  if (!enabled_) return;
+  notifyEnableChanged();
   std::string ssid = store_.getDefaultSSID();
-  if (enabled_ && !ssid.empty()) {
+  if (!ssid.empty()) {
     connect();
   }
+  resume();
 }
 
 void Controller::addListener(Listener* listener) {
@@ -129,6 +134,7 @@ const Controller::Network& Controller::otherNetwork(int idx) const {
 }
 
 bool Controller::startScan() {
+  if (!enabled_ || paused_) return false;
   bool started = interface_.startScan();
   if (started) {
     for (auto& l : model_listeners_) {
@@ -144,9 +150,13 @@ void Controller::toggleEnabled() {
   if (!enabled_) {
     interface_.disconnect();
   }
+  interface_.setEnabled(enabled_);
   connecting_ = false;
   notifyEnableChanged();
   if (enabled_) {
+    if (!store_.getDefaultSSID().empty()) {
+      connect();
+    }
     resume();
   } else {
     pause();
@@ -164,9 +174,14 @@ bool Controller::getStoredPassword(const std::string& ssid,
   return store_.getPassword(ssid, passwd);
 }
 
-void Controller::pause() { start_scan_.cancel(); }
+void Controller::pause() {
+  paused_ = true;
+  start_scan_.cancel();
+  refresh_current_network_.cancel();
+}
 
 void Controller::resume() {
+  paused_ = false;
   if (!enabled_) return;
   refreshCurrentNetwork();
   if (!refresh_current_network_.is_scheduled()) {
@@ -189,22 +204,23 @@ void Controller::setPassword(const std::string& ssid,
 
 bool Controller::connect() {
   std::string ssid = store_.getDefaultSSID();
+  if (ssid.empty()) return false;
   std::string password;
   store_.getPassword(ssid, password);
   return connect(ssid, password);
 }
 
 bool Controller::connect(const std::string& ssid, const std::string& passwd) {
+  if (!enabled_ || ssid.empty()) return false;
   std::string default_ssid = store_.getDefaultSSID();
+  std::string current_password;
+  if (!interface_.connect(ssid, passwd)) return false;
   if (ssid != default_ssid) {
     store_.setDefaultSSID(ssid);
   }
-  std::string current_password;
-  if (!passwd.empty() && (!store_.getPassword(ssid, current_password) ||
-                          current_password != passwd)) {
+  if (!store_.getPassword(ssid, current_password) || current_password != passwd) {
     store_.setPassword(ssid, passwd);
   }
-  if (!interface_.connect(ssid, passwd)) return false;
   connecting_ = true;
   const Network* in_range = lookupNetwork(ssid);
   if (in_range == nullptr) {
@@ -225,6 +241,7 @@ void Controller::forget(const std::string& ssid) {
   store_.clearPassword(ssid);
   if (ssid == store_.getDefaultSSID()) {
     store_.clearDefaultSSID();
+    interface_.clearPersistentCredentials();
   }
 }
 
@@ -233,6 +250,9 @@ void Controller::onConnectionStateChanged(Interface::EventType type) {
   if (type == Interface::EV_DISCONNECTED ||
       type == Interface::EV_CONNECTION_FAILED ||
       type == Interface::EV_CONNECTION_LOST) {
+    connecting_ = false;
+  }
+  if (type == Interface::EV_CONNECTED || type == Interface::EV_GOT_IP) {
     connecting_ = false;
   }
   updateCurrentNetwork(current_network_.ssid, current_network_.open,
@@ -244,7 +264,7 @@ void Controller::onConnectionStateChanged(Interface::EventType type) {
 
 void Controller::periodicRefreshCurrentNetwork() {
   refreshCurrentNetwork();
-  if (isEnabled()) {
+  if (isEnabled() && !paused_) {
     refresh_current_network_.scheduleAfter(roo_time::Seconds(2));
   }
 }
@@ -310,12 +330,17 @@ void Controller::updateCurrentNetwork(const std::string& ssid, bool open,
 void Controller::onScanCompleted() {
   current_network_index_ = -1;
   std::vector<NetworkDetails> raw_data;
-  interface_.getScanResults(&raw_data, 100);
+  if (!interface_.getScanResults(&raw_data, 100)) {
+    if (enabled_ && !paused_) {
+      start_scan_.scheduleAfter(roo_time::Seconds(15));
+    }
+    return;
+  }
   auto notify_scan_completed = [this]() {
     for (auto& listener : model_listeners_) {
       listener->onScanCompleted();
     }
-    if (enabled_) {
+    if (enabled_ && !paused_) {
       start_scan_.scheduleAfter(roo_time::Seconds(15));
     }
   };

@@ -92,6 +92,12 @@ class Interface {
   /// Unregisters an interface event listener.
   virtual void removeEventListener(EventListener* listener) = 0;
 
+  /// Enables or disables the physical Wi-Fi interface.
+  virtual void setEnabled(bool enabled) { (void)enabled; }
+
+  /// Clears any credentials persisted by the platform Wi-Fi stack.
+  virtual void clearPersistentCredentials() {}
+
   /// Returns current AP information; false if not connected.
   virtual bool getApInfo(NetworkDetails* info) const = 0;
   /// Starts a scan.

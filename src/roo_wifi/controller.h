@@ -176,6 +176,7 @@ class Controller {
   roo_collections::FlatSmallHashSet<Listener*> model_listeners_;
   bool connecting_;
   bool listener_attached_;
+  bool paused_;
 
   roo_scheduler::SingletonTask start_scan_;
   roo_scheduler::SingletonTask refresh_current_network_;
