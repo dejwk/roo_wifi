@@ -175,6 +175,10 @@ class Controller {
   WifiListener wifi_listener_;
   roo_collections::FlatSmallHashSet<Listener*> model_listeners_;
   bool connecting_;
+  // Events do not identify an SSID. Keep the target until the connection
+  // reaches a terminal state so an asynchronous failure is not shown on a
+  // previously connected network.
+  std::string pending_connection_ssid_;
   bool listener_attached_;
   bool paused_;
 

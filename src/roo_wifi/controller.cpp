@@ -37,6 +37,7 @@ Controller::Controller(Store& store, Interface& interface,
       wifi_listener_(*this),
       model_listeners_(),
       connecting_(false),
+      pending_connection_ssid_(),
       listener_attached_(false),
       paused_(true),
       start_scan_(scheduler, [this]() { startScan(); }),
@@ -149,6 +150,7 @@ void Controller::toggleEnabled() {
   store_.setIsInterfaceEnabled(enabled_);
   if (!enabled_) {
     interface_.disconnect();
+    pending_connection_ssid_.clear();
   }
   interface_.setEnabled(enabled_);
   connecting_ = false;
@@ -214,7 +216,13 @@ bool Controller::connect(const std::string& ssid, const std::string& passwd) {
   if (!enabled_ || ssid.empty()) return false;
   std::string default_ssid = store_.getDefaultSSID();
   std::string current_password;
-  if (!interface_.connect(ssid, passwd)) return false;
+  // The adapter can synchronously publish an event while connect() is in
+  // progress. Set the target first so that event has an unambiguous owner.
+  pending_connection_ssid_ = ssid;
+  if (!interface_.connect(ssid, passwd)) {
+    pending_connection_ssid_.clear();
+    return false;
+  }
   if (ssid != default_ssid) {
     store_.setDefaultSSID(ssid);
   }
@@ -234,6 +242,7 @@ bool Controller::connect(const std::string& ssid, const std::string& passwd) {
 
 void Controller::disconnect() {
   connecting_ = false;
+  pending_connection_ssid_.clear();
   interface_.disconnect();
 }
 
@@ -255,8 +264,20 @@ void Controller::onConnectionStateChanged(Interface::EventType type) {
   if (type == Interface::EV_CONNECTED || type == Interface::EV_GOT_IP) {
     connecting_ = false;
   }
-  updateCurrentNetwork(current_network_.ssid, current_network_.open,
-                       current_network_.rssi, getConnectionStatus(type), true);
+  const std::string& ssid = pending_connection_ssid_.empty()
+                                ? current_network_.ssid
+                                : pending_connection_ssid_;
+  const Network* network = lookupNetwork(ssid);
+  updateCurrentNetwork(ssid, network == nullptr ? current_network_.open
+                                                 : network->open,
+                       network == nullptr ? current_network_.rssi
+                                          : network->rssi,
+                       getConnectionStatus(type), true);
+  if (type == Interface::EV_GOT_IP || type == Interface::EV_DISCONNECTED ||
+      type == Interface::EV_CONNECTION_FAILED ||
+      type == Interface::EV_CONNECTION_LOST) {
+    pending_connection_ssid_.clear();
+  }
   for (auto& l : model_listeners_) {
     l->onConnectionStateChanged(type);
   }

@@ -200,4 +200,31 @@ TEST(ControllerTest, SuccessfulConnectionIsNoLongerInProgressAfterGotIp) {
   EXPECT_EQ(controller.currentNetworkStatus(), roo_wifi::WL_CONNECTED);
 }
 
+TEST(ControllerTest, ConnectionFailureStaysWithPendingNetwork) {
+  FakeStore store;
+  FakeInterface interface;
+  interface.addScanResult("Roo Guest", -50, roo_wifi::WIFI_AUTH_OPEN);
+  interface.addScanResult("Roo Secure", -70, roo_wifi::WIFI_AUTH_WPA2_PSK);
+  roo_scheduler::Scheduler scheduler;
+  roo_wifi::Controller controller(store, interface, scheduler);
+  controller.begin();
+  controller.toggleEnabled();
+  interface.completeScan();
+  scheduler.executeEligibleTasks();
+
+  ASSERT_TRUE(controller.connect("Roo Guest", ""));
+  interface.emit(roo_wifi::Interface::EV_GOT_IP);
+  scheduler.executeEligibleTasks();
+  ASSERT_EQ("Roo Guest", controller.currentNetwork().ssid);
+
+  ASSERT_TRUE(controller.connect("Roo Secure", "wrong"));
+  // A refresh can still observe the previous access point while the new
+  // authentication attempt is in flight.
+  interface.emit(roo_wifi::Interface::EV_CONNECTION_FAILED);
+  scheduler.executeEligibleTasks();
+
+  EXPECT_EQ("Roo Secure", controller.currentNetwork().ssid);
+  EXPECT_EQ(roo_wifi::WL_CONNECT_FAILED, controller.currentNetworkStatus());
+}
+
 }  // namespace
