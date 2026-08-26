@@ -38,6 +38,7 @@ Controller::Controller(Store& store, Interface& interface,
       model_listeners_(),
       connecting_(false),
       pending_connection_ssid_(),
+      connection_generation_(0),
       listener_attached_(false),
       paused_(true),
       start_scan_(scheduler, [this]() { startScan(); }),
@@ -59,24 +60,34 @@ void Controller::shutdown() {
   }
 }
 
-void Controller::enqueueInterfaceEvent(Interface::EventType type) {
+void Controller::enqueueInterfaceEvent(Interface::EventType type,
+                                       roo::string_view event_ssid) {
+  std::string ssid(event_ssid.data(), event_ssid.size());
+  uint64_t connection_generation;
+  {
+    roo::lock_guard<roo::mutex> lock(connection_state_mutex_);
+    if (ssid.empty()) ssid = pending_connection_ssid_;
+    connection_generation = connection_generation_;
+  }
   std::shared_ptr<EventDispatchState> state = event_dispatch_state_;
-  scheduler_.scheduleNow([state, type]() {
+  scheduler_.scheduleNow([state, type, ssid, connection_generation]() {
     roo::lock_guard<roo::mutex> lock(state->mutex);
     if (state->controller != nullptr) {
-      state->controller->onInterfaceEvent(type);
+      state->controller->onInterfaceEvent(type, ssid, connection_generation);
     }
   });
 }
 
-void Controller::onInterfaceEvent(Interface::EventType type) {
+void Controller::onInterfaceEvent(Interface::EventType type,
+                                  const std::string& ssid,
+                                  uint64_t connection_generation) {
   if (paused_ || !enabled_) return;
   switch (type) {
     case Interface::EV_SCAN_COMPLETED:
       onScanCompleted();
       break;
     default:
-      onConnectionStateChanged(type);
+      onConnectionStateChanged(type, ssid, connection_generation);
       break;
   }
 }
@@ -150,7 +161,9 @@ void Controller::toggleEnabled() {
   store_.setIsInterfaceEnabled(enabled_);
   if (!enabled_) {
     interface_.disconnect();
+    roo::lock_guard<roo::mutex> lock(connection_state_mutex_);
     pending_connection_ssid_.clear();
+    ++connection_generation_;
   }
   interface_.setEnabled(enabled_);
   connecting_ = false;
@@ -218,9 +231,17 @@ bool Controller::connect(const std::string& ssid, const std::string& passwd) {
   std::string current_password;
   // The adapter can synchronously publish an event while connect() is in
   // progress. Set the target first so that event has an unambiguous owner.
-  pending_connection_ssid_ = ssid;
+  uint64_t connection_generation;
+  {
+    roo::lock_guard<roo::mutex> lock(connection_state_mutex_);
+    pending_connection_ssid_ = ssid;
+    connection_generation = ++connection_generation_;
+  }
   if (!interface_.connect(ssid, passwd)) {
-    pending_connection_ssid_.clear();
+    roo::lock_guard<roo::mutex> lock(connection_state_mutex_);
+    if (connection_generation_ == connection_generation) {
+      pending_connection_ssid_.clear();
+    }
     return false;
   }
   if (ssid != default_ssid) {
@@ -242,7 +263,11 @@ bool Controller::connect(const std::string& ssid, const std::string& passwd) {
 
 void Controller::disconnect() {
   connecting_ = false;
-  pending_connection_ssid_.clear();
+  {
+    roo::lock_guard<roo::mutex> lock(connection_state_mutex_);
+    pending_connection_ssid_.clear();
+    ++connection_generation_;
+  }
   interface_.disconnect();
 }
 
@@ -254,8 +279,21 @@ void Controller::forget(const std::string& ssid) {
   }
 }
 
-void Controller::onConnectionStateChanged(Interface::EventType type) {
+void Controller::onConnectionStateChanged(Interface::EventType type,
+                                          const std::string& event_ssid,
+                                          uint64_t connection_generation) {
   if (type == Interface::EV_UNKNOWN) return;
+  {
+    roo::lock_guard<roo::mutex> lock(connection_state_mutex_);
+    if (connection_generation != connection_generation_ ||
+        (!event_ssid.empty() && !pending_connection_ssid_.empty() &&
+         event_ssid != pending_connection_ssid_)) {
+      if (type == Interface::EV_CONNECTION_FAILED && !event_ssid.empty()) {
+        store_.clearPassword(event_ssid);
+      }
+      return;
+    }
+  }
   if (type == Interface::EV_DISCONNECTED ||
       type == Interface::EV_CONNECTION_FAILED ||
       type == Interface::EV_CONNECTION_LOST) {
@@ -264,9 +302,14 @@ void Controller::onConnectionStateChanged(Interface::EventType type) {
   if (type == Interface::EV_CONNECTED || type == Interface::EV_GOT_IP) {
     connecting_ = false;
   }
-  const std::string& ssid = pending_connection_ssid_.empty()
-                                ? current_network_.ssid
-                                : pending_connection_ssid_;
+  const std::string& ssid =
+      event_ssid.empty() ? current_network_.ssid : event_ssid;
+  if (type == Interface::EV_CONNECTION_FAILED && !ssid.empty()) {
+    // An authentication failure proves that the credential for this network
+    // is unusable. Do not silently retry it the next time the network is
+    // selected; let the UI ask for a replacement password instead.
+    store_.clearPassword(ssid);
+  }
   const Network* network = lookupNetwork(ssid);
   updateCurrentNetwork(ssid, network == nullptr ? current_network_.open
                                                  : network->open,
@@ -276,7 +319,10 @@ void Controller::onConnectionStateChanged(Interface::EventType type) {
   if (type == Interface::EV_GOT_IP || type == Interface::EV_DISCONNECTED ||
       type == Interface::EV_CONNECTION_FAILED ||
       type == Interface::EV_CONNECTION_LOST) {
-    pending_connection_ssid_.clear();
+    roo::lock_guard<roo::mutex> lock(connection_state_mutex_);
+    if (connection_generation_ == connection_generation) {
+      pending_connection_ssid_.clear();
+    }
   }
   for (auto& l : model_listeners_) {
     l->onConnectionStateChanged(type);

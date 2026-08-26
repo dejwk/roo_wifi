@@ -108,10 +108,16 @@ class Controller {
   /// Stores a password for the given SSID.
   void setPassword(const std::string& ssid, const std::string& passwd);
 
-  /// Connects using stored SSID/password values.
+  /// Starts connecting using stored SSID/password values.
+  ///
+  /// Returns true when the attempt was accepted. Its eventual result is
+  /// delivered asynchronously through the controller listeners.
   bool connect();
 
-  /// Connects to the specified SSID/password.
+  /// Starts connecting to the specified SSID/password.
+  ///
+  /// Returns true when the attempt was accepted. Its eventual result is
+  /// delivered asynchronously through the controller listeners.
   bool connect(const std::string& ssid, const std::string& passwd);
 
   /// Disconnects the current connection.
@@ -132,8 +138,9 @@ class Controller {
    public:
     WifiListener(Controller& wifi) : wifi_(wifi) {}
 
-    void onEvent(Interface::EventType type) {
-      wifi_.enqueueInterfaceEvent(type);
+    void onEvent(Interface::EventType type,
+                 roo::string_view ssid) override {
+      wifi_.enqueueInterfaceEvent(type, ssid);
     }
 
    private:
@@ -149,10 +156,14 @@ class Controller {
     Controller* controller;
   };
 
-  void enqueueInterfaceEvent(Interface::EventType type);
-  void onInterfaceEvent(Interface::EventType type);
+  void enqueueInterfaceEvent(Interface::EventType type,
+                             roo::string_view ssid);
+  void onInterfaceEvent(Interface::EventType type, const std::string& ssid,
+                        uint64_t connection_generation);
 
-  void onConnectionStateChanged(Interface::EventType type);
+  void onConnectionStateChanged(Interface::EventType type,
+                                const std::string& ssid,
+                                uint64_t connection_generation);
 
   void periodicRefreshCurrentNetwork();
 
@@ -175,10 +186,11 @@ class Controller {
   WifiListener wifi_listener_;
   roo_collections::FlatSmallHashSet<Listener*> model_listeners_;
   bool connecting_;
-  // Events do not identify an SSID. Keep the target until the connection
-  // reaches a terminal state so an asynchronous failure is not shown on a
-  // previously connected network.
+  // Snapshot the target and generation with each queued event so a delayed
+  // callback cannot be applied to a newer connection attempt.
   std::string pending_connection_ssid_;
+  uint64_t connection_generation_;
+  roo::mutex connection_state_mutex_;
   bool listener_attached_;
   bool paused_;
 

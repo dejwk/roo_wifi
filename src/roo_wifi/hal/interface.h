@@ -5,6 +5,8 @@
 #include <string>
 #include <vector>
 
+#include "roo_backport/string_view.h"
+
 namespace roo_wifi {
 
 /// Wi-Fi authentication modes.
@@ -84,7 +86,23 @@ class Interface {
   class EventListener {
    public:
     virtual ~EventListener() {}
-    virtual void onEvent(EventType type) {}
+
+    /// Receives an interface event and the SSID associated with it.
+    ///
+    /// The listener is invoked synchronously as part of interface event
+    /// dispatch, but the event itself is generally produced asynchronously
+    /// relative to `connect()`. In particular, `connect()` may return and a
+    /// new connection attempt may start before an earlier attempt reports its
+    /// result. Consumers must therefore use `ssid`, rather than the current
+    /// connection target, to associate delayed events with a network.
+    ///
+    /// `ssid` may be empty for events whose native representation does not
+    /// identify a network. The view is valid only for the duration of this
+    /// call; consumers that defer processing must make an owning copy.
+    ///
+    /// @param type The kind of event being reported.
+    /// @param ssid The event's network SSID, if provided by the interface.
+    virtual void onEvent(EventType type, roo::string_view ssid) = 0;
   };
 
   /// Registers an interface event listener.
@@ -107,7 +125,11 @@ class Interface {
 
   /// Disconnects from the current network.
   virtual void disconnect() = 0;
-  /// Connects to the specified SSID/password.
+  /// Starts connecting to the specified SSID/password.
+  ///
+  /// A true return value means that the connection attempt was accepted, not
+  /// that authentication or address acquisition succeeded. Completion is
+  /// reported later through `EventListener`.
   virtual bool connect(const std::string& ssid, const std::string& passwd) = 0;
   /// Returns the current connection status.
   virtual ConnectionStatus getStatus() = 0;

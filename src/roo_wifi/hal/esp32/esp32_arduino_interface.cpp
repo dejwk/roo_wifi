@@ -204,7 +204,8 @@ void Esp32ArduinoInterface::removeEventListener(EventListener* listener) {
 
 namespace {
 
-Interface::EventType getEventType(arduino_event_id_t event, arduino_event_info_t info) {
+Interface::EventType getEventType(arduino_event_id_t event,
+                                  const arduino_event_info_t& info) {
   switch (event) {
     case ARDUINO_EVENT_WIFI_SCAN_DONE:
       return Interface::EV_SCAN_COMPLETED;
@@ -228,13 +229,31 @@ Interface::EventType getEventType(arduino_event_id_t event, arduino_event_info_t
   }
 }
 
+roo::string_view getEventSsid(arduino_event_id_t event,
+                              const arduino_event_info_t& info) {
+  switch (event) {
+    case ARDUINO_EVENT_WIFI_STA_CONNECTED:
+      return roo::string_view(
+          reinterpret_cast<const char*>(info.wifi_sta_connected.ssid),
+          info.wifi_sta_connected.ssid_len);
+    case ARDUINO_EVENT_WIFI_STA_DISCONNECTED:
+      return roo::string_view(
+          reinterpret_cast<const char*>(info.wifi_sta_disconnected.ssid),
+          info.wifi_sta_disconnected.ssid_len);
+    default:
+      return roo::string_view();
+  }
+}
+
 }  // namespace
 
-void Esp32ArduinoInterface::dispatchEvent(arduino_event_id_t event, arduino_event_info_t info) {
+void Esp32ArduinoInterface::dispatchEvent(
+    arduino_event_id_t event, const arduino_event_info_t& info) {
   EventType type = getEventType(event, info);
+  roo::string_view ssid = getEventSsid(event, info);
   roo::lock_guard<roo::mutex> lock(listeners_mutex_);
   for (const auto& l : listeners_) {
-    l->onEvent(type);
+    l->onEvent(type, ssid);
   }
 }
 

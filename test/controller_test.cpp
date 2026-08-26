@@ -84,10 +84,12 @@ class FakeInterface : public roo_wifi::Interface {
 
   void completeScan() {
     scan_completed_ = true;
-    listener_->onEvent(EV_SCAN_COMPLETED);
+    listener_->onEvent(EV_SCAN_COMPLETED, roo::string_view());
   }
 
-  void emit(EventType type) { listener_->onEvent(type); }
+  void emit(EventType type, roo::string_view ssid = roo::string_view()) {
+    listener_->onEvent(type, ssid);
+  }
 
   bool connect_result = true;
   int start_scan_calls = 0;
@@ -225,6 +227,56 @@ TEST(ControllerTest, ConnectionFailureStaysWithPendingNetwork) {
 
   EXPECT_EQ("Roo Secure", controller.currentNetwork().ssid);
   EXPECT_EQ(roo_wifi::WL_CONNECT_FAILED, controller.currentNetworkStatus());
+}
+
+TEST(ControllerTest, ConnectionFailureClearsOnlyRejectedPassword) {
+  FakeStore store;
+  store.setPassword("Roo Guest", "guest-password");
+  FakeInterface interface;
+  roo_scheduler::Scheduler scheduler;
+  roo_wifi::Controller controller(store, interface, scheduler);
+  controller.begin();
+  controller.toggleEnabled();
+
+  ASSERT_TRUE(controller.connect("Roo Secure", "wrong"));
+  interface.emit(roo_wifi::Interface::EV_CONNECTION_FAILED);
+  scheduler.executeEligibleTasks();
+
+  std::string password;
+  EXPECT_FALSE(controller.getStoredPassword("Roo Secure", password));
+  ASSERT_TRUE(controller.getStoredPassword("Roo Guest", password));
+  EXPECT_EQ("guest-password", password);
+}
+
+TEST(ControllerTest, QueuedFailureCannotMoveToNewConnectionAttempt) {
+  FakeStore store;
+  FakeInterface interface;
+  interface.addScanResult("Roo Guest", -50, roo_wifi::WIFI_AUTH_OPEN);
+  interface.addScanResult("Roo Secure", -70, roo_wifi::WIFI_AUTH_WPA2_PSK);
+  roo_scheduler::Scheduler scheduler;
+  roo_wifi::Controller controller(store, interface, scheduler);
+  controller.begin();
+  controller.toggleEnabled();
+  interface.completeScan();
+  scheduler.executeEligibleTasks();
+
+  ASSERT_TRUE(controller.connect("Roo Secure", "wrong"));
+  ASSERT_TRUE(controller.connect("Roo Guest", ""));
+  // The old hardware attempt reports its failure only after Guest has become
+  // the pending target.
+  interface.emit(roo_wifi::Interface::EV_CONNECTION_FAILED, "Roo Secure");
+  scheduler.executeEligibleTasks();
+
+  EXPECT_EQ("Roo Guest", controller.currentNetwork().ssid);
+  EXPECT_EQ(roo_wifi::WL_DISCONNECTED, controller.currentNetworkStatus());
+  EXPECT_TRUE(controller.isConnecting());
+  std::string password;
+  EXPECT_FALSE(controller.getStoredPassword("Roo Secure", password));
+
+  interface.emit(roo_wifi::Interface::EV_GOT_IP);
+  scheduler.executeEligibleTasks();
+  EXPECT_EQ("Roo Guest", controller.currentNetwork().ssid);
+  EXPECT_EQ(roo_wifi::WL_CONNECTED, controller.currentNetworkStatus());
 }
 
 }  // namespace

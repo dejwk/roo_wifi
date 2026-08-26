@@ -59,7 +59,7 @@ class Esp32ArduinoInterface : public Interface {
   /// Dispatches a native Arduino Wi-Fi event to registered listeners.
   ///
   /// This is public solely for the process-wide Arduino callback.
-  void dispatchEvent(WiFiEvent_t event, WiFiEventInfo_t info);
+  void dispatchEvent(WiFiEvent_t event, const WiFiEventInfo_t& info);
 
  private:
   roo_collections::FlatSmallHashSet<EventListener*> listeners_;
