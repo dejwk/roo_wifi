@@ -1,3 +1,6 @@
+/// @file
+/// @brief Persistent Wi-Fi configuration and credential storage contract.
+
 #pragma once
 
 #include <inttypes.h>
@@ -10,27 +13,40 @@
 
 namespace roo_wifi {
 
-/// Abstraction for persistently storing Wi-Fi controller data.
+/// @brief Persistent storage abstraction used by `Controller`.
+/// @ingroup roo_wifi
+///
+/// Implementations store interface enablement, the default SSID, and passwords
+/// associated with individual SSIDs.
 class Store {
  public:
+  /// @brief Virtual destructor.
   virtual ~Store() = default;
 
-  /// Returns whether the Wi-Fi interface is enabled.
+  /// @brief Returns the persisted Wi-Fi enabled state.
   virtual bool getIsInterfaceEnabled() = 0;
-  /// Sets whether the Wi-Fi interface is enabled.
+  /// @brief Persists the Wi-Fi enabled state.
+  /// @param enabled State to persist.
   virtual void setIsInterfaceEnabled(bool enabled) = 0;
-  /// Returns the default SSID, if any.
+  /// @brief Returns the default SSID, or an empty string when unset.
   virtual std::string getDefaultSSID() = 0;
-  /// Sets the default SSID.
+  /// @brief Persists the default SSID.
+  /// @param ssid SSID to make the default connection target.
   virtual void setDefaultSSID(const std::string& ssid) = 0;
-  /// Clears the default SSID.
+  /// @brief Clears the persisted default SSID.
   virtual void clearDefaultSSID() = 0;
-  /// Retrieves a stored password for an SSID.
+  /// @brief Retrieves a password associated with an SSID.
+  /// @param ssid SSID whose password should be retrieved.
+  /// @param password Destination populated on success.
+  /// @return `true` when a password entry exists, including an empty password.
   virtual bool getPassword(const std::string& ssid, std::string& password) = 0;
-  /// Stores a password for an SSID.
+  /// @brief Stores or replaces the password associated with an SSID.
+  /// @param ssid SSID whose profile should be updated.
+  /// @param password Password to store; may be empty for an open network.
   virtual void setPassword(const std::string& ssid,
                            roo::string_view password) = 0;
-  /// Clears a stored password for an SSID.
+  /// @brief Removes the password entry associated with an SSID.
+  /// @param ssid SSID whose password should be removed.
   virtual void clearPassword(const std::string& ssid) = 0;
 };
 

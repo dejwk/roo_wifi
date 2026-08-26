@@ -1,3 +1,6 @@
+/// @file
+/// @brief ESP32 preferences-backed Wi-Fi store.
+
 #pragma once
 
 #include "roo_prefs.h"
@@ -5,36 +8,43 @@
 
 namespace roo_wifi {
 
-/// Store implementation backed by roo_prefs (ESP32 Arduino preferences).
+/// @brief Stores Wi-Fi configuration in ESP32 non-volatile preferences.
+/// @ingroup roo_wifi
+///
+/// Password keys are derived from SSIDs so multiple network profiles can be
+/// stored without exposing SSIDs as preferences keys.
 class ArduinoPreferencesStore : public Store {
  public:
+  /// @brief Constructs a store bound to the Roo Wi-Fi preference collection.
   ArduinoPreferencesStore();
 
-  /// Initializes the preferences store (no-op placeholder).
+  /// @brief Initializes the preferences store.
+  ///
+  /// Present for a uniform adapter lifecycle; currently performs no work.
   void begin() {}
 
-  /// Returns whether the Wi-Fi interface is enabled.
+  /// @copydoc Store::getIsInterfaceEnabled()
   bool getIsInterfaceEnabled() override;
 
-  /// Sets whether the Wi-Fi interface is enabled.
+  /// @copydoc Store::setIsInterfaceEnabled()
   void setIsInterfaceEnabled(bool enabled) override;
 
-  /// Returns the default SSID, if any.
+  /// @copydoc Store::getDefaultSSID()
   std::string getDefaultSSID() override;
 
-  /// Clears the default SSID.
+  /// @copydoc Store::clearDefaultSSID()
   void clearDefaultSSID() override;
 
-  /// Sets the default SSID.
+  /// @copydoc Store::setDefaultSSID()
   void setDefaultSSID(const std::string& ssid) override;
 
-  /// Retrieves a stored password for an SSID.
+  /// @copydoc Store::getPassword()
   bool getPassword(const std::string& ssid, std::string& password) override;
 
-  /// Stores a password for an SSID.
+  /// @copydoc Store::setPassword()
   void setPassword(const std::string& ssid, roo::string_view password) override;
 
-  /// Clears a stored password for an SSID.
+  /// @copydoc Store::clearPassword()
   void clearPassword(const std::string& ssid) override;
 
  private:

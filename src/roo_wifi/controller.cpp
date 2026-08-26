@@ -4,7 +4,7 @@ namespace roo_wifi {
 
 namespace {
 
-ConnectionStatus getConnectionStatus(Interface::EventType type) {
+ConnectionStatus GetConnectionStatus(Interface::EventType type) {
   switch (type) {
     case Interface::EV_CONNECTED:
       return WL_IDLE_STATUS;
@@ -247,7 +247,8 @@ bool Controller::connect(const std::string& ssid, const std::string& passwd) {
   if (ssid != default_ssid) {
     store_.setDefaultSSID(ssid);
   }
-  if (!store_.getPassword(ssid, current_password) || current_password != passwd) {
+  if (!store_.getPassword(ssid, current_password) ||
+      current_password != passwd) {
     store_.setPassword(ssid, passwd);
   }
   connecting_ = true;
@@ -311,11 +312,10 @@ void Controller::onConnectionStateChanged(Interface::EventType type,
     store_.clearPassword(ssid);
   }
   const Network* network = lookupNetwork(ssid);
-  updateCurrentNetwork(ssid, network == nullptr ? current_network_.open
-                                                 : network->open,
-                       network == nullptr ? current_network_.rssi
-                                          : network->rssi,
-                       getConnectionStatus(type), true);
+  updateCurrentNetwork(
+      ssid, network == nullptr ? current_network_.open : network->open,
+      network == nullptr ? current_network_.rssi : network->rssi,
+      GetConnectionStatus(type), true);
   if (type == Interface::EV_GOT_IP || type == Interface::EV_DISCONNECTED ||
       type == Interface::EV_CONNECTION_FAILED ||
       type == Interface::EV_CONNECTION_LOST) {

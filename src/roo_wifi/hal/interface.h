@@ -1,3 +1,6 @@
+/// @file
+/// @brief Platform-independent Wi-Fi hardware interface contract.
+
 #pragma once
 
 #include <inttypes.h>
@@ -9,7 +12,8 @@
 
 namespace roo_wifi {
 
-/// Wi-Fi authentication modes.
+/// @brief Authentication modes reported by scanned access points.
+/// @ingroup roo_wifi
 enum AuthMode {
   WIFI_AUTH_OPEN = 0,         ///< Open.
   WIFI_AUTH_WEP,              ///< WEP.
@@ -23,7 +27,8 @@ enum AuthMode {
   WIFI_AUTH_UNKNOWN           ///< Unknown.
 };
 
-/// Wi-Fi cipher types.
+/// @brief Pairwise and group cipher types reported by Wi-Fi hardware.
+/// @ingroup roo_wifi
 enum CipherType {
   WIFI_CIPHER_TYPE_NONE = 0,     ///< None.
   WIFI_CIPHER_TYPE_WEP40,        ///< WEP40.
@@ -40,18 +45,20 @@ enum CipherType {
   WIFI_CIPHER_TYPE_UNKNOWN,      ///< Unknown.
 };
 
-/// Wi-Fi connection status.
+/// @brief Current Wi-Fi connection or scan status.
+/// @ingroup roo_wifi
 enum ConnectionStatus {
-  WL_IDLE_STATUS = 0,
-  WL_NO_SSID_AVAIL = 1,
-  WL_SCAN_COMPLETED = 2,
-  WL_CONNECTED = 3,
-  WL_CONNECT_FAILED = 4,
-  WL_CONNECTION_LOST = 5,
-  WL_DISCONNECTED = 6
+  WL_IDLE_STATUS = 0,      ///< Associated, but an IP address is not ready.
+  WL_NO_SSID_AVAIL = 1,    ///< The requested network is unavailable.
+  WL_SCAN_COMPLETED = 2,   ///< A network scan completed.
+  WL_CONNECTED = 3,        ///< Connected and an IP address is available.
+  WL_CONNECT_FAILED = 4,   ///< Authentication or connection failed.
+  WL_CONNECTION_LOST = 5,  ///< An established connection was lost.
+  WL_DISCONNECTED = 6      ///< Not connected.
 };
 
-/// Detailed network information reported by the interface.
+/// @brief Detailed access-point information reported by `Interface`.
+/// @ingroup roo_wifi
 struct NetworkDetails {
   uint8_t bssid[6];            ///< MAC address of AP.
   uint8_t ssid[33];            ///< SSID of AP.
@@ -60,34 +67,40 @@ struct NetworkDetails {
   AuthMode authmode;           ///< Auth mode of AP.
   CipherType pairwise_cipher;  ///< Pairwise cipher of AP.
   CipherType group_cipher;     ///< Group cipher of AP.
-  bool use_11b;
-  bool use_11g;
-  bool use_11n;
+  bool use_11b;                ///< Whether the AP supports IEEE 802.11b.
+  bool use_11g;                ///< Whether the AP supports IEEE 802.11g.
+  bool use_11n;                ///< Whether the AP supports IEEE 802.11n.
+  /// Whether the AP supports Wi-Fi Protected Setup.
   bool supports_wps;
 
-  ConnectionStatus status;
+  ConnectionStatus status;  ///< Status associated with this network record.
 };
 
-/// Abstraction for interacting with the hardware Wi-Fi interface.
+/// @brief Platform abstraction for Wi-Fi hardware operations and events.
+/// @ingroup roo_wifi
+///
+/// Connection requests are asynchronous: `connect()` starts an attempt and
+/// completion is delivered to registered `EventListener` instances.
 class Interface {
  public:
-  /// Interface event types.
+  /// @brief Events emitted by a Wi-Fi interface.
   enum EventType {
-    EV_UNKNOWN = 0,
-    EV_SCAN_COMPLETED = 1,
-    EV_CONNECTED = 2,
-    EV_GOT_IP = 3,
-    EV_DISCONNECTED = 4,
-    EV_CONNECTION_FAILED = 5,
-    EV_CONNECTION_LOST = 6,
+    EV_UNKNOWN = 0,            ///< Unrecognized or unsupported native event.
+    EV_SCAN_COMPLETED = 1,     ///< A requested scan completed.
+    EV_CONNECTED = 2,          ///< Associated with an access point.
+    EV_GOT_IP = 3,             ///< Network address configuration completed.
+    EV_DISCONNECTED = 4,       ///< Disconnected without a specific failure.
+    EV_CONNECTION_FAILED = 5,  ///< Authentication or association failed.
+    EV_CONNECTION_LOST = 6,    ///< A previously established link was lost.
   };
 
-  /// Listener for interface events.
+  /// @brief Receives synchronous dispatch of asynchronous interface events.
   class EventListener {
    public:
+    /// @brief Virtual destructor.
     virtual ~EventListener() {}
 
-    /// Receives an interface event and the SSID associated with it.
+    /// @brief Receives an interface event and its associated SSID.
     ///
     /// The listener is invoked synchronously as part of interface event
     /// dispatch, but the event itself is generally produced asynchronously
@@ -105,39 +118,52 @@ class Interface {
     virtual void onEvent(EventType type, roo::string_view ssid) = 0;
   };
 
-  /// Registers an interface event listener.
+  /// @brief Registers an interface event listener.
+  /// @param listener Non-null listener that remains alive until removed.
   virtual void addEventListener(EventListener* listener) = 0;
-  /// Unregisters an interface event listener.
+  /// @brief Unregisters a previously registered event listener.
+  /// @param listener Listener to remove.
   virtual void removeEventListener(EventListener* listener) = 0;
 
-  /// Enables or disables the physical Wi-Fi interface.
+  /// @brief Enables or disables the physical Wi-Fi interface.
+  /// @param enabled Whether the interface should be enabled.
   virtual void setEnabled(bool enabled) { (void)enabled; }
 
-  /// Clears any credentials persisted by the platform Wi-Fi stack.
+  /// @brief Clears credentials persisted by the platform Wi-Fi stack.
   virtual void clearPersistentCredentials() {}
 
-  /// Returns current AP information; false if not connected.
+  /// @brief Retrieves information about the currently connected AP.
+  /// @param info Destination populated on success.
+  /// @return `true` when connected AP information was available.
   virtual bool getApInfo(NetworkDetails* info) const = 0;
-  /// Starts a scan.
+  /// @brief Starts an asynchronous network scan.
+  /// @return `true` when the scan request was accepted.
   virtual bool startScan() = 0;
-  /// Returns true if the last scan has completed.
+  /// @brief Reports whether the most recently requested scan has completed.
   virtual bool scanCompleted() const = 0;
 
-  /// Disconnects from the current network.
+  /// @brief Requests disconnection from the current network.
   virtual void disconnect() = 0;
-  /// Starts connecting to the specified SSID/password.
+  /// @brief Starts connecting to the specified SSID/password.
   ///
   /// A true return value means that the connection attempt was accepted, not
   /// that authentication or address acquisition succeeded. Completion is
   /// reported later through `EventListener`.
+  ///
+  /// @param ssid SSID to connect to.
+  /// @param passwd Password, or an empty string for an open network.
+  /// @return `true` when the connection request was accepted.
   virtual bool connect(const std::string& ssid, const std::string& passwd) = 0;
-  /// Returns the current connection status.
+  /// @brief Returns the platform's current connection status.
   virtual ConnectionStatus getStatus() = 0;
 
-  /// Returns scan results, up to max_count entries.
+  /// @brief Retrieves results from the most recently completed scan.
+  /// @param list Destination replaced with up to `max_count` results.
+  /// @param max_count Maximum number of results to return.
+  /// @return `true` when scan results were available.
   virtual bool getScanResults(std::vector<NetworkDetails>* list,
                               int max_count) const = 0;
-  /// Virtual destructor.
+  /// @brief Virtual destructor.
   virtual ~Interface() {}
 };
 

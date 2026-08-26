@@ -2,14 +2,14 @@
 
 #include <algorithm>
 
-#include "WiFiGeneric.h"
 #include "WiFi.h"
+#include "WiFiGeneric.h"
 
 namespace roo_wifi {
 
 namespace {
 
-static AuthMode authMode(wifi_auth_mode_t mode) {
+AuthMode ToAuthMode(wifi_auth_mode_t mode) {
   switch (mode) {
     case ::WIFI_AUTH_OPEN:
       return WIFI_AUTH_OPEN;
@@ -37,25 +37,23 @@ static AuthMode authMode(wifi_auth_mode_t mode) {
 roo::mutex interfaces_mutex;
 roo_collections::FlatSmallHashSet<Esp32ArduinoInterface*> interfaces;
 
-void dispatch(arduino_event_id_t event, arduino_event_info_t info) {
+void Dispatch(arduino_event_id_t event, arduino_event_info_t info) {
   roo::lock_guard<roo::mutex> lock(interfaces_mutex);
   for (Esp32ArduinoInterface* interface : interfaces) {
     interface->dispatchEvent(event, info);
   }
 }
 
-void init() {
+void Init() {
   static struct Init {
-    Init() { WiFi.onEvent(&dispatch); }
+    Init() { WiFi.onEvent(&Dispatch); }
   } init;
 }
 
 }  // namespace
 
 Esp32ArduinoInterface::Esp32ArduinoInterface()
-    : listeners_(),
-      listeners_mutex_(),
-      attached_(false) {}
+    : listeners_(), listeners_mutex_(), attached_(false) {}
 
 Esp32ArduinoInterface::~Esp32ArduinoInterface() {
   roo::lock_guard<roo::mutex> lock(interfaces_mutex);
@@ -66,7 +64,7 @@ Esp32ArduinoInterface::~Esp32ArduinoInterface() {
 }
 
 void Esp32ArduinoInterface::begin() {
-  init();
+  Init();
   WiFi.persistent(false);
   {
     roo::lock_guard<roo::mutex> lock(interfaces_mutex);
@@ -104,7 +102,7 @@ bool Esp32ArduinoInterface::getApInfo(NetworkDetails* info) const {
       const uint8_t* scan_bssid = WiFi.BSSID(i);
       if (scan_bssid != nullptr && ssid == WiFi.SSID(i) &&
           memcmp(bssid, scan_bssid, sizeof(info->bssid)) == 0) {
-        info->authmode = authMode(WiFi.encryptionType(i));
+        info->authmode = ToAuthMode(WiFi.encryptionType(i));
         break;
       }
     }
@@ -149,7 +147,7 @@ bool Esp32ArduinoInterface::getScanResults(std::vector<NetworkDetails>* list,
     if (bssid != nullptr) {
       memcpy(info.bssid, bssid, sizeof(info.bssid));
     }
-    info.authmode = authMode(WiFi.encryptionType(i));
+    info.authmode = ToAuthMode(WiFi.encryptionType(i));
     info.rssi = WiFi.RSSI(i);
     info.primary = WiFi.channel(i);
     info.group_cipher = WIFI_CIPHER_TYPE_UNKNOWN;
@@ -181,8 +179,9 @@ void Esp32ArduinoInterface::clearPersistentCredentials() {
 
 bool Esp32ArduinoInterface::connect(const std::string& ssid,
                                     const std::string& passwd) {
-  if (ssid.empty() || ssid.size() > 32 || ssid.find('\0') != std::string::npos ||
-      passwd.size() > 64 || passwd.find('\0') != std::string::npos) {
+  if (ssid.empty() || ssid.size() > 32 ||
+      ssid.find('\0') != std::string::npos || passwd.size() > 64 ||
+      passwd.find('\0') != std::string::npos) {
     return false;
   }
   return WiFi.begin(ssid.c_str(), passwd.c_str()) != ::WL_CONNECT_FAILED;
@@ -204,7 +203,7 @@ void Esp32ArduinoInterface::removeEventListener(EventListener* listener) {
 
 namespace {
 
-Interface::EventType getEventType(arduino_event_id_t event,
+Interface::EventType GetEventType(arduino_event_id_t event,
                                   const arduino_event_info_t& info) {
   switch (event) {
     case ARDUINO_EVENT_WIFI_SCAN_DONE:
@@ -229,7 +228,7 @@ Interface::EventType getEventType(arduino_event_id_t event,
   }
 }
 
-roo::string_view getEventSsid(arduino_event_id_t event,
+roo::string_view GetEventSsid(arduino_event_id_t event,
                               const arduino_event_info_t& info) {
   switch (event) {
     case ARDUINO_EVENT_WIFI_STA_CONNECTED:
@@ -247,10 +246,10 @@ roo::string_view getEventSsid(arduino_event_id_t event,
 
 }  // namespace
 
-void Esp32ArduinoInterface::dispatchEvent(
-    arduino_event_id_t event, const arduino_event_info_t& info) {
-  EventType type = getEventType(event, info);
-  roo::string_view ssid = getEventSsid(event, info);
+void Esp32ArduinoInterface::dispatchEvent(arduino_event_id_t event,
+                                          const arduino_event_info_t& info) {
+  EventType type = GetEventType(event, info);
+  roo::string_view ssid = GetEventSsid(event, info);
   roo::lock_guard<roo::mutex> lock(listeners_mutex_);
   for (const auto& l : listeners_) {
     l->onEvent(type, ssid);

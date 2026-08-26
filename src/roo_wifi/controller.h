@@ -1,3 +1,6 @@
+/// @file
+/// @brief High-level Wi-Fi controller and observable network model.
+
 #pragma once
 
 #include <inttypes.h>
@@ -15,119 +18,164 @@
 
 namespace roo_wifi {
 
-/// High-level Wi-Fi controller that manages scanning and connections.
+/// @brief Manages Wi-Fi enablement, scans, profiles, and connections.
+/// @ingroup roo_wifi
+///
+/// `Controller` coordinates a platform `Interface`, persistent `Store`, and
+/// scheduler. It maintains a scan model for user interfaces and serializes
+/// native interface callbacks onto the supplied scheduler.
 class Controller {
  public:
-  /// Summary of a scanned network.
+  /// @brief Summary of a scanned or currently selected network.
   struct Network {
+    /// @brief Constructs an empty network with the minimum RSSI value.
     Network() : ssid(), open(false), rssi(-128) {}
 
-    std::string ssid;
-    bool open;
-    int8_t rssi;
+    std::string ssid;  ///< Service set identifier.
+    bool open;         ///< Whether the network requires no password.
+    int8_t rssi;       ///< Received signal strength in dBm.
   };
 
-  /// Listener for controller events.
+  /// @brief Observes changes to the controller model.
+  ///
+  /// Callbacks run on the controller's scheduler context. A listener must
+  /// remain alive from `addListener()` until `removeListener()`.
   class Listener {
    public:
+    /// @brief Constructs a listener.
     Listener() = default;
+    /// @brief Virtual destructor.
     virtual ~Listener() = default;
 
+    /// @brief Called after the enabled state changes.
+    /// @param enabled The new enabled state.
     virtual void onEnableChanged(bool enabled) {}
+    /// @brief Called after an asynchronous scan starts.
     virtual void onScanStarted() {}
+    /// @brief Called after scan results have been incorporated into the model.
     virtual void onScanCompleted() {}
+    /// @brief Called after the selected network or its status changes.
     virtual void onCurrentNetworkChanged() {}
+    /// @brief Called after a native connection event updates the model.
+    /// @param type The interface event that was processed.
     virtual void onConnectionStateChanged(Interface::EventType type) {}
 
    private:
     friend class Controller;
   };
 
-  /// Creates a controller using the provided store, interface, and scheduler.
+  /// @brief Creates a controller over caller-owned dependencies.
+  /// @param store Persistent configuration and credential store.
+  /// @param interface Platform Wi-Fi interface.
+  /// @param scheduler Scheduler used for refreshes and event dispatch.
+  ///
+  /// All dependencies must outlive the controller.
   Controller(Store& store, Interface& interface,
              roo_scheduler::Scheduler& scheduler);
 
-  /// Destroys the controller and detaches listeners.
+  /// @brief Cancels scheduled work and detaches from the interface.
   virtual ~Controller();
 
+  /// @brief Copy construction is disabled.
   Controller(const Controller&) = delete;
+  /// @brief Copy assignment is disabled.
   Controller& operator=(const Controller&) = delete;
+  /// @brief Move construction is disabled.
   Controller(Controller&&) = delete;
+  /// @brief Move assignment is disabled.
   Controller& operator=(Controller&&) = delete;
 
-  /// Initializes the controller and registers for interface events.
+  /// @brief Initializes persisted state and registers for interface events.
   void begin();
 
-  /// Adds a listener for controller events.
+  /// @brief Adds a listener for controller model events.
+  /// @param listener Non-null listener that remains alive until removed.
   void addListener(Listener* listener);
 
-  /// Removes a previously added listener.
+  /// @brief Removes a previously added listener.
+  /// @param listener Listener to remove.
   void removeListener(Listener* listener);
 
-  /// Returns the number of non-current networks in the scan list.
+  /// @brief Returns the number of scanned networks other than the current one.
   int otherScannedNetworksCount() const;
 
-  /// Returns the current network (may be empty if disconnected).
+  /// @brief Returns the current connection target and its scan metadata.
+  ///
+  /// The SSID may be empty when no default or selected network exists.
   const Network& currentNetwork() const;
 
-  /// Returns a network by SSID, or nullptr if not found.
+  /// @brief Finds a network in the latest scan results.
+  /// @param ssid SSID to find.
+  /// @return Network metadata, or `nullptr` when not present.
   const Network* lookupNetwork(const std::string& ssid) const;
 
-  /// Returns the connection status of the current network.
+  /// @brief Returns the status associated with `currentNetwork()`.
   ConnectionStatus currentNetworkStatus() const;
 
-  /// Returns the ith non-current network in the scan list.
+  /// @brief Returns a scanned network other than the current network.
+  /// @param idx Zero-based index less than `otherScannedNetworksCount()`.
   const Network& otherNetwork(int idx) const;
 
-  /// Starts a scan. Returns false if a scan could not be started.
+  /// @brief Starts an asynchronous network scan.
+  /// @return `true` when the scan request was accepted.
   bool startScan();
 
-  /// Returns true when the current scan has completed.
+  /// @brief Reports whether the interface's current scan has completed.
   bool isScanCompleted() const { return interface_.scanCompleted(); }
-  /// Returns true when the interface is enabled.
+  /// @brief Reports whether Wi-Fi is enabled.
   bool isEnabled() const { return enabled_; }
 
-  /// Returns true when a connection is in progress.
+  /// @brief Reports whether a connection attempt is in progress.
   bool isConnecting() const { return connecting_; }
 
-  /// Toggles the enabled/disabled state and persists it in the store.
+  /// @brief Toggles Wi-Fi and persists the resulting enabled state.
   void toggleEnabled();
 
-  /// Notifies listeners that enable state changed.
+  /// @brief Notifies listeners of the current enabled state.
   void notifyEnableChanged();
 
-  /// Looks up a stored password for the given SSID.
+  /// @brief Retrieves a stored password for an SSID.
+  /// @param ssid SSID whose password should be retrieved.
+  /// @param passwd Destination populated on success.
+  /// @return `true` when a stored password exists.
   bool getStoredPassword(const std::string& ssid, std::string& passwd) const;
 
-  /// Temporarily disables periodic refresh and event processing.
+  /// @brief Suspends scans, periodic refresh, and interface event processing.
   void pause();
 
-  /// Resumes periodic refresh and event processing.
+  /// @brief Resumes refresh and scanning when Wi-Fi is enabled.
   void resume();
 
-  /// Stores a password for the given SSID.
+  /// @brief Stores or replaces a password for an SSID.
+  /// @param ssid SSID whose profile should be updated.
+  /// @param passwd Password to store.
   void setPassword(const std::string& ssid, const std::string& passwd);
 
-  /// Starts connecting using stored SSID/password values.
+  /// @brief Starts connecting using stored SSID/password values.
   ///
   /// Returns true when the attempt was accepted. Its eventual result is
   /// delivered asynchronously through the controller listeners.
+  /// @return `true` when a default SSID existed and the request was accepted.
   bool connect();
 
-  /// Starts connecting to the specified SSID/password.
+  /// @brief Starts connecting to the specified SSID/password.
   ///
   /// Returns true when the attempt was accepted. Its eventual result is
   /// delivered asynchronously through the controller listeners.
+  /// @param ssid SSID to connect to.
+  /// @param passwd Password, or an empty string for an open network.
+  /// @return `true` when the request was accepted.
   bool connect(const std::string& ssid, const std::string& passwd);
 
-  /// Disconnects the current connection.
+  /// @brief Cancels any pending attempt and requests disconnection.
   void disconnect();
 
-  /// Forgets the password and SSID association.
+  /// @brief Removes a network's stored password and default association.
+  /// @param ssid SSID whose saved profile should be forgotten.
   void forget(const std::string& ssid);
 
  protected:
-  /// Stops controller activity and detaches the interface listener.
+  /// @brief Stops controller activity and detaches the interface listener.
   ///
   /// Safe to call more than once. Derived classes that own the interface must
   /// call this before destroying it.
@@ -138,8 +186,7 @@ class Controller {
    public:
     WifiListener(Controller& wifi) : wifi_(wifi) {}
 
-    void onEvent(Interface::EventType type,
-                 roo::string_view ssid) override {
+    void onEvent(Interface::EventType type, roo::string_view ssid) override {
       wifi_.enqueueInterfaceEvent(type, ssid);
     }
 
@@ -150,14 +197,14 @@ class Controller {
   friend class WifiListener;
 
   struct EventDispatchState {
-    explicit EventDispatchState(Controller* controller) : controller(controller) {}
+    explicit EventDispatchState(Controller* controller)
+        : controller(controller) {}
 
     roo::mutex mutex;
     Controller* controller;
   };
 
-  void enqueueInterfaceEvent(Interface::EventType type,
-                             roo::string_view ssid);
+  void enqueueInterfaceEvent(Interface::EventType type, roo::string_view ssid);
   void onInterfaceEvent(Interface::EventType type, const std::string& ssid,
                         uint64_t connection_generation);
 
