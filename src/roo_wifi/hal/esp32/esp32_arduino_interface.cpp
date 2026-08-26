@@ -184,7 +184,12 @@ bool Esp32ArduinoInterface::connect(const std::string& ssid,
       passwd.find('\0') != std::string::npos) {
     return false;
   }
-  return WiFi.begin(ssid.c_str(), passwd.c_str()) != ::WL_CONNECT_FAILED;
+  // WiFi.begin() returns the station's live status, not whether the request
+  // was accepted. The Arduino event task can publish an authentication failure
+  // before begin() returns, making that status timing-dependent. Validated
+  // requests are accepted here; their result is reported through events.
+  WiFi.begin(ssid.c_str(), passwd.c_str());
+  return true;
 }
 
 ConnectionStatus Esp32ArduinoInterface::getStatus() {

@@ -47,7 +47,11 @@ class FakeInterface : public roo_wifi::Interface {
   void removeEventListener(EventListener* listener) override {
     if (listener_ == listener) listener_ = nullptr;
   }
-  bool getApInfo(roo_wifi::NetworkDetails*) const override { return false; }
+  bool getApInfo(roo_wifi::NetworkDetails* info) const override {
+    if (!has_ap_info_) return false;
+    *info = ap_info_;
+    return true;
+  }
   bool startScan() override {
     ++start_scan_calls;
     scan_completed_ = false;
@@ -59,6 +63,7 @@ class FakeInterface : public roo_wifi::Interface {
     ++connect_calls;
     last_ssid = ssid;
     last_password = password;
+    if (connect_event != EV_UNKNOWN) listener_->onEvent(connect_event, ssid);
     return connect_result;
   }
   roo_wifi::ConnectionStatus getStatus() override {
@@ -82,6 +87,16 @@ class FakeInterface : public roo_wifi::Interface {
     scan_results_.push_back(result);
   }
 
+  void setApInfo(const char* ssid, int8_t rssi,
+                 roo_wifi::ConnectionStatus status) {
+    ap_info_ = {};
+    std::strncpy(reinterpret_cast<char*>(ap_info_.ssid), ssid,
+                 sizeof(ap_info_.ssid) - 1);
+    ap_info_.rssi = rssi;
+    ap_info_.status = status;
+    has_ap_info_ = true;
+  }
+
   void completeScan() {
     scan_completed_ = true;
     listener_->onEvent(EV_SCAN_COMPLETED, roo::string_view());
@@ -92,6 +107,7 @@ class FakeInterface : public roo_wifi::Interface {
   }
 
   bool connect_result = true;
+  EventType connect_event = EV_UNKNOWN;
   int start_scan_calls = 0;
   int connect_calls = 0;
   std::string last_ssid;
@@ -100,6 +116,8 @@ class FakeInterface : public roo_wifi::Interface {
  private:
   EventListener* listener_ = nullptr;
   bool scan_completed_ = false;
+  bool has_ap_info_ = false;
+  roo_wifi::NetworkDetails ap_info_ = {};
   std::vector<roo_wifi::NetworkDetails> scan_results_;
 };
 
@@ -202,6 +220,26 @@ TEST(ControllerTest, SuccessfulConnectionIsNoLongerInProgressAfterGotIp) {
   EXPECT_EQ(controller.currentNetworkStatus(), roo_wifi::WL_CONNECTED);
 }
 
+TEST(ControllerTest, SynchronousAuthenticationFailureKeepsAttemptedNetwork) {
+  FakeStore store;
+  FakeInterface interface;
+  interface.addScanResult("Roo Guest", -50, roo_wifi::WIFI_AUTH_OPEN);
+  interface.addScanResult("Roo Secure", -70, roo_wifi::WIFI_AUTH_WPA2_PSK);
+  roo_scheduler::Scheduler scheduler;
+  roo_wifi::Controller controller(store, interface, scheduler);
+  controller.begin();
+  controller.toggleEnabled();
+  interface.completeScan();
+  scheduler.executeEligibleTasks();
+
+  interface.connect_event = roo_wifi::Interface::EV_CONNECTION_FAILED;
+  ASSERT_TRUE(controller.connect("Roo Secure", "wrong"));
+  scheduler.executeEligibleTasks();
+
+  EXPECT_EQ("Roo Secure", controller.currentNetwork().ssid);
+  EXPECT_EQ(roo_wifi::WL_CONNECT_FAILED, controller.currentNetworkStatus());
+}
+
 TEST(ControllerTest, ConnectionFailureStaysWithPendingNetwork) {
   FakeStore store;
   FakeInterface interface;
@@ -277,6 +315,63 @@ TEST(ControllerTest, QueuedFailureCannotMoveToNewConnectionAttempt) {
   scheduler.executeEligibleTasks();
   EXPECT_EQ("Roo Guest", controller.currentNetwork().ssid);
   EXPECT_EQ(roo_wifi::WL_CONNECTED, controller.currentNetworkStatus());
+}
+
+TEST(ControllerTest, DelayedPreviousNetworkEventCannotReplaceFailedTarget) {
+  FakeStore store;
+  FakeInterface interface;
+  interface.addScanResult("Roo Guest", -50, roo_wifi::WIFI_AUTH_OPEN);
+  interface.addScanResult("Roo Secure", -70, roo_wifi::WIFI_AUTH_WPA2_PSK);
+  roo_scheduler::Scheduler scheduler;
+  roo_wifi::Controller controller(store, interface, scheduler);
+  controller.begin();
+  controller.toggleEnabled();
+  interface.completeScan();
+  scheduler.executeEligibleTasks();
+
+  ASSERT_TRUE(controller.connect("Roo Guest", ""));
+  interface.emit(roo_wifi::Interface::EV_GOT_IP);
+  scheduler.executeEligibleTasks();
+  ASSERT_EQ("Roo Guest", controller.currentNetwork().ssid);
+
+  ASSERT_TRUE(controller.connect("Roo Secure", "wrong"));
+  interface.emit(roo_wifi::Interface::EV_CONNECTION_FAILED, "Roo Secure");
+  scheduler.executeEligibleTasks();
+  ASSERT_EQ("Roo Secure", controller.currentNetwork().ssid);
+  ASSERT_EQ(roo_wifi::WL_CONNECT_FAILED, controller.currentNetworkStatus());
+
+  // Disconnecting the old AP can be reported after the new attempt's
+  // authentication failure. It must not replace the failed target.
+  interface.emit(roo_wifi::Interface::EV_DISCONNECTED, "Roo Guest");
+  scheduler.executeEligibleTasks();
+
+  EXPECT_EQ("Roo Secure", controller.currentNetwork().ssid);
+  EXPECT_EQ(roo_wifi::WL_CONNECT_FAILED, controller.currentNetworkStatus());
+}
+
+TEST(ControllerTest, RefreshCannotReplaceFailedTargetWithPreviousAccessPoint) {
+  FakeStore store;
+  FakeInterface interface;
+  interface.addScanResult("Roo Guest", -50, roo_wifi::WIFI_AUTH_OPEN);
+  interface.addScanResult("Roo Secure", -70, roo_wifi::WIFI_AUTH_WPA2_PSK);
+  roo_scheduler::Scheduler scheduler;
+  roo_wifi::Controller controller(store, interface, scheduler);
+  controller.begin();
+  controller.toggleEnabled();
+  interface.completeScan();
+  scheduler.executeEligibleTasks();
+
+  ASSERT_TRUE(controller.connect("Roo Secure", "wrong"));
+  interface.emit(roo_wifi::Interface::EV_CONNECTION_FAILED, "Roo Secure");
+  scheduler.executeEligibleTasks();
+  ASSERT_EQ(roo_wifi::WL_CONNECT_FAILED, controller.currentNetworkStatus());
+
+  // A periodic refresh can briefly observe the AP from before this attempt.
+  interface.setApInfo("Roo Guest", -50, roo_wifi::WL_CONNECTED);
+  controller.resume();
+
+  EXPECT_EQ("Roo Secure", controller.currentNetwork().ssid);
+  EXPECT_EQ(roo_wifi::WL_CONNECT_FAILED, controller.currentNetworkStatus());
 }
 
 }  // namespace

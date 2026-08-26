@@ -37,7 +37,7 @@ Controller::Controller(Store& store, Interface& interface,
       wifi_listener_(*this),
       model_listeners_(),
       connecting_(false),
-      pending_connection_ssid_(),
+      connection_target_ssid_(),
       connection_generation_(0),
       listener_attached_(false),
       paused_(true),
@@ -66,7 +66,7 @@ void Controller::enqueueInterfaceEvent(Interface::EventType type,
   uint64_t connection_generation;
   {
     roo::lock_guard<roo::mutex> lock(connection_state_mutex_);
-    if (ssid.empty()) ssid = pending_connection_ssid_;
+    if (ssid.empty()) ssid = connection_target_ssid_;
     connection_generation = connection_generation_;
   }
   std::shared_ptr<EventDispatchState> state = event_dispatch_state_;
@@ -162,7 +162,7 @@ void Controller::toggleEnabled() {
   if (!enabled_) {
     interface_.disconnect();
     roo::lock_guard<roo::mutex> lock(connection_state_mutex_);
-    pending_connection_ssid_.clear();
+    connection_target_ssid_.clear();
     ++connection_generation_;
   }
   interface_.setEnabled(enabled_);
@@ -232,15 +232,17 @@ bool Controller::connect(const std::string& ssid, const std::string& passwd) {
   // The adapter can synchronously publish an event while connect() is in
   // progress. Set the target first so that event has an unambiguous owner.
   uint64_t connection_generation;
+  std::string previous_connection_target;
   {
     roo::lock_guard<roo::mutex> lock(connection_state_mutex_);
-    pending_connection_ssid_ = ssid;
+    previous_connection_target = connection_target_ssid_;
+    connection_target_ssid_ = ssid;
     connection_generation = ++connection_generation_;
   }
   if (!interface_.connect(ssid, passwd)) {
     roo::lock_guard<roo::mutex> lock(connection_state_mutex_);
     if (connection_generation_ == connection_generation) {
-      pending_connection_ssid_.clear();
+      connection_target_ssid_ = previous_connection_target;
     }
     return false;
   }
@@ -266,7 +268,7 @@ void Controller::disconnect() {
   connecting_ = false;
   {
     roo::lock_guard<roo::mutex> lock(connection_state_mutex_);
-    pending_connection_ssid_.clear();
+    connection_target_ssid_.clear();
     ++connection_generation_;
   }
   interface_.disconnect();
@@ -287,8 +289,8 @@ void Controller::onConnectionStateChanged(Interface::EventType type,
   {
     roo::lock_guard<roo::mutex> lock(connection_state_mutex_);
     if (connection_generation != connection_generation_ ||
-        (!event_ssid.empty() && !pending_connection_ssid_.empty() &&
-         event_ssid != pending_connection_ssid_)) {
+        (!event_ssid.empty() && !connection_target_ssid_.empty() &&
+         event_ssid != connection_target_ssid_)) {
       if (type == Interface::EV_CONNECTION_FAILED && !event_ssid.empty()) {
         store_.clearPassword(event_ssid);
       }
@@ -316,14 +318,6 @@ void Controller::onConnectionStateChanged(Interface::EventType type,
       ssid, network == nullptr ? current_network_.open : network->open,
       network == nullptr ? current_network_.rssi : network->rssi,
       GetConnectionStatus(type), true);
-  if (type == Interface::EV_GOT_IP || type == Interface::EV_DISCONNECTED ||
-      type == Interface::EV_CONNECTION_FAILED ||
-      type == Interface::EV_CONNECTION_LOST) {
-    roo::lock_guard<roo::mutex> lock(connection_state_mutex_);
-    if (connection_generation_ == connection_generation) {
-      pending_connection_ssid_.clear();
-    }
-  }
   for (auto& l : model_listeners_) {
     l->onConnectionStateChanged(type);
   }
@@ -340,10 +334,24 @@ void Controller::refreshCurrentNetwork() {
   // If we're connected to the network, this is it.
   NetworkDetails current;
   if (interface_.getApInfo(&current)) {
-    updateCurrentNetwork(std::string((const char*)current.ssid,
-                                     strlen((const char*)current.ssid)),
-                         (current.authmode == WIFI_AUTH_OPEN), current.rssi,
-                         current.status, false);
+    std::string reported_ssid((const char*)current.ssid,
+                              strlen((const char*)current.ssid));
+    std::string connection_target;
+    {
+      roo::lock_guard<roo::mutex> lock(connection_state_mutex_);
+      connection_target = connection_target_ssid_;
+    }
+    bool preserve_target = connecting_ ||
+                           current_network_status_ == WL_CONNECT_FAILED ||
+                           current_network_status_ == WL_CONNECTION_LOST;
+    if (preserve_target && !connection_target.empty() &&
+        reported_ssid != connection_target) {
+      // The adapter can briefly continue reporting the previous AP while a
+      // new attempt is in flight or after that attempt has failed.
+      return;
+    }
+    updateCurrentNetwork(reported_ssid, (current.authmode == WIFI_AUTH_OPEN),
+                         current.rssi, current.status, false);
   } else {
     // Check if we have a default network.
     std::string default_ssid = store_.getDefaultSSID();

@@ -233,9 +233,10 @@ class Controller {
   WifiListener wifi_listener_;
   roo_collections::FlatSmallHashSet<Listener*> model_listeners_;
   bool connecting_;
-  // Snapshot the target and generation with each queued event so a delayed
-  // callback cannot be applied to a newer connection attempt.
-  std::string pending_connection_ssid_;
+  // Snapshot the target and generation with each queued event. The target is
+  // retained after terminal events so later events from the previous AP do not
+  // replace the result of the most recent connection attempt.
+  std::string connection_target_ssid_;
   uint64_t connection_generation_;
   roo::mutex connection_state_mutex_;
   bool listener_attached_;
