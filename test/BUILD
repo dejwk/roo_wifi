@@ -9,3 +9,5 @@ cc_test(
         "@googletest//:gtest_main",
     ],
 )
+
+exports_files(["portable_api_compile_test.cpp"])
