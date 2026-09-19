@@ -1,377 +1,408 @@
-#include "roo_wifi/controller.h"
-
-#include <algorithm>
-#include <cstring>
-#include <string>
-#include <unordered_map>
-#include <vector>
-
+#include "backend_fakes.h"
 #include "gtest/gtest.h"
-#include "roo_scheduler.h"
-#include "roo_wifi/hal/interface.h"
-#include "roo_wifi/hal/store.h"
-
-namespace {
-
-class FakeStore : public roo_wifi::Store {
- public:
-  bool getIsInterfaceEnabled() override { return enabled_; }
-  void setIsInterfaceEnabled(bool enabled) override { enabled_ = enabled; }
-  std::string getDefaultSSID() override { return default_ssid_; }
-  void setDefaultSSID(const std::string& ssid) override {
-    default_ssid_ = ssid;
+namespace roo_wifi {
+class BackendTest : public testing::Test {
+ protected:
+  roo_scheduler::Scheduler scheduler;
+  TestStation native;
+  OrderedInterface radio{native};
+  MemoryStore store;
+  Controller controller{radio, store, scheduler};
+  Observer observer;
+  void SetUp() override {
+    store.enabled = true;
+    controller.addListener(observer);
+    ASSERT_EQ(controller.begin(), Error::kOk);
+    Pump(scheduler);
+    observer.results.clear();
   }
-  void clearDefaultSSID() override { default_ssid_.clear(); }
-  bool getPassword(const std::string& ssid, std::string& password) override {
-    auto itr = passwords_.find(ssid);
-    if (itr == passwords_.end()) return false;
-    password = itr->second;
-    return true;
-  }
-  void setPassword(const std::string& ssid, roo::string_view password) override {
-    passwords_[ssid] = std::string(password.data(), password.size());
-  }
-  void clearPassword(const std::string& ssid) override { passwords_.erase(ssid); }
-
- private:
-  bool enabled_ = false;
-  std::string default_ssid_;
-  std::unordered_map<std::string, std::string> passwords_;
+  void TearDown() override { controller.removeListener(observer); }
 };
-
-class FakeInterface : public roo_wifi::Interface {
- public:
-  void addEventListener(EventListener* listener) override {
-    listener_ = listener;
-  }
-  void removeEventListener(EventListener* listener) override {
-    if (listener_ == listener) listener_ = nullptr;
-  }
-  bool getApInfo(roo_wifi::NetworkDetails* info) const override {
-    if (!has_ap_info_) return false;
-    *info = ap_info_;
-    return true;
-  }
-  bool startScan() override {
-    ++start_scan_calls;
-    scan_completed_ = false;
-    return true;
-  }
-  bool scanCompleted() const override { return scan_completed_; }
-  void disconnect() override {}
-  bool connect(const std::string& ssid, const std::string& password) override {
-    ++connect_calls;
-    last_ssid = ssid;
-    last_password = password;
-    if (connect_event != EV_UNKNOWN) listener_->onEvent(connect_event, ssid);
-    return connect_result;
-  }
-  roo_wifi::ConnectionStatus getStatus() override {
-    return roo_wifi::WL_DISCONNECTED;
-  }
-  bool getScanResults(std::vector<roo_wifi::NetworkDetails>* results,
-                      int max_count) const override {
-    const size_t count =
-        std::min(scan_results_.size(), static_cast<size_t>(max_count));
-    results->assign(scan_results_.begin(), scan_results_.begin() + count);
-    return true;
-  }
-
-  void addScanResult(const char* ssid, int8_t rssi,
-                     roo_wifi::AuthMode auth_mode) {
-    roo_wifi::NetworkDetails result = {};
-    std::strncpy(reinterpret_cast<char*>(result.ssid), ssid,
-                 sizeof(result.ssid) - 1);
-    result.rssi = rssi;
-    result.authmode = auth_mode;
-    scan_results_.push_back(result);
-  }
-
-  void setApInfo(const char* ssid, int8_t rssi,
-                 roo_wifi::ConnectionStatus status) {
-    ap_info_ = {};
-    std::strncpy(reinterpret_cast<char*>(ap_info_.ssid), ssid,
-                 sizeof(ap_info_.ssid) - 1);
-    ap_info_.rssi = rssi;
-    ap_info_.status = status;
-    has_ap_info_ = true;
-  }
-
-  void completeScan() {
-    scan_completed_ = true;
-    listener_->onEvent(EV_SCAN_COMPLETED, roo::string_view());
-  }
-
-  void emit(EventType type, roo::string_view ssid = roo::string_view()) {
-    listener_->onEvent(type, ssid);
-  }
-
-  bool connect_result = true;
-  EventType connect_event = EV_UNKNOWN;
-  int start_scan_calls = 0;
-  int connect_calls = 0;
-  std::string last_ssid;
-  std::string last_password;
-
- private:
-  EventListener* listener_ = nullptr;
-  bool scan_completed_ = false;
-  bool has_ap_info_ = false;
-  roo_wifi::NetworkDetails ap_info_ = {};
-  std::vector<roo_wifi::NetworkDetails> scan_results_;
-};
-
-class RecordingListener : public roo_wifi::Controller::Listener {
- public:
-  void onScanStarted() override { ++scan_started; }
-  void onScanCompleted() override { ++scan_completed; }
-
-  int scan_started = 0;
-  int scan_completed = 0;
-};
-
-TEST(ControllerTest, EmptyScanStillNotifiesCompletion) {
-  FakeStore store;
-  FakeInterface interface;
-  roo_scheduler::Scheduler scheduler;
-  roo_wifi::Controller controller(store, interface, scheduler);
-  RecordingListener listener;
-  controller.addListener(&listener);
-  controller.begin();
-
-  controller.toggleEnabled();
-  ASSERT_EQ(listener.scan_started, 1);
-  interface.completeScan();
-  scheduler.executeEligibleTasks();
-
-  EXPECT_EQ(listener.scan_completed, 1);
-  EXPECT_EQ(controller.otherScannedNetworksCount(), 0);
+// Verifies accepted work owns its input and succeeds only after address
+// readiness.
+TEST_F(BackendTest, OwnedInputAndAddressReadiness) {
+  ConnectionConfig c = TestConfig();
+  RequestResult r = controller.connect(c, {});
+  ASSERT_NE(r.id, 0);
+  c.ssid.bytes[0] = 'X';
+  EXPECT_TRUE(observer.results.empty());
+  Pump(scheduler);
+  EXPECT_EQ(native.last_config.ssid.bytes[0], 'n');
+  native.associated();
+  Pump(scheduler);
+  EXPECT_TRUE(observer.results.empty());
+  native.ready();
+  Pump(scheduler);
+  ASSERT_EQ(observer.results.size(), 1);
+  EXPECT_EQ(observer.results[0].id, r.id);
+  EXPECT_EQ(observer.results[0].error, Error::kOk);
+  native.disconnected();
+  Pump(scheduler);
+  EXPECT_EQ(observer.results.size(), 1);
+  EXPECT_EQ(controller.linkState().connection_id, r.id);
 }
-
-TEST(ControllerTest, NonEmptyScanSortsAndDeduplicatesNetworks) {
-  FakeStore store;
-  FakeInterface interface;
-  interface.addScanResult("Roo Secure", -70, roo_wifi::WIFI_AUTH_WPA2_PSK);
-  interface.addScanResult("Roo Guest", -50, roo_wifi::WIFI_AUTH_OPEN);
-  interface.addScanResult("Roo Guest", -80, roo_wifi::WIFI_AUTH_OPEN);
-  roo_scheduler::Scheduler scheduler;
-  roo_wifi::Controller controller(store, interface, scheduler);
-  controller.begin();
-
-  controller.toggleEnabled();
-  interface.completeScan();
-  scheduler.executeEligibleTasks();
-
-  ASSERT_EQ(controller.otherScannedNetworksCount(), 2);
-  EXPECT_EQ(controller.otherNetwork(0).ssid, "Roo Guest");
-  EXPECT_EQ(controller.otherNetwork(0).rssi, -50);
-  EXPECT_TRUE(controller.otherNetwork(0).open);
-  EXPECT_EQ(controller.otherNetwork(1).ssid, "Roo Secure");
-  EXPECT_EQ(controller.otherNetwork(1).rssi, -70);
-  EXPECT_FALSE(controller.otherNetwork(1).open);
+// Verifies switching processes A's queued disconnect before starting B.
+TEST_F(BackendTest, OrderedSwitchWithDelayedDispatch) {
+  RequestResult a = controller.connect(TestConfig("A"), {});
+  Pump(scheduler);
+  native.associated();
+  native.ready();
+  Pump(scheduler);
+  RequestResult b = controller.connect(TestConfig("B"), {});
+  Pump(scheduler);
+  EXPECT_EQ(native.connects, 1);
+  EXPECT_EQ(native.disconnects, 1);
+  native.ready();
+  native.disconnected();
+  Pump(scheduler);
+  EXPECT_EQ(native.connects, 2);
+  EXPECT_EQ(controller.linkState().connection_id, b.id);
+  EXPECT_EQ(controller.linkState().phase, LinkPhase::kConnecting);
+  native.associated();
+  native.ready();
+  Pump(scheduler);
+  ASSERT_EQ(observer.results.size(), 2);
+  EXPECT_EQ(observer.results[0].id, a.id);
+  EXPECT_EQ(observer.results[1].id, b.id);
 }
-
-TEST(ControllerTest, EnabledControllerStartsScanAndReconnectsAtBoot) {
-  FakeStore store;
-  store.setIsInterfaceEnabled(true);
-  store.setDefaultSSID("Roo Secure");
-  store.setPassword("Roo Secure", "secret");
-  FakeInterface interface;
-  roo_scheduler::Scheduler scheduler;
-  roo_wifi::Controller controller(store, interface, scheduler);
-
-  controller.begin();
-
-  EXPECT_EQ(interface.connect_calls, 1);
-  EXPECT_EQ(interface.last_ssid, "Roo Secure");
-  EXPECT_EQ(interface.last_password, "secret");
-  EXPECT_EQ(interface.start_scan_calls, 1);
+// Verifies cancellation waits for the native lifecycle before allowing a retry.
+TEST_F(BackendTest, CancelBeforeAssociationAndSameSsidRetry) {
+  RequestResult a = controller.connect(TestConfig(), {});
+  Pump(scheduler);
+  EXPECT_EQ(controller.cancel(a.id), Error::kOk);
+  EXPECT_EQ(controller.connect(TestConfig(), {}).error, Error::kBusy);
+  Pump(scheduler);
+  EXPECT_TRUE(observer.results.empty());
+  native.disconnected();
+  Pump(scheduler);
+  ASSERT_EQ(observer.results.size(), 1);
+  EXPECT_EQ(observer.results[0].error, Error::kCancelled);
+  RequestResult b = controller.connect(TestConfig(), {});
+  EXPECT_NE(b.id, a.id);
+  Pump(scheduler);
+  native.associated();
+  native.ready();
+  Pump(scheduler);
+  ASSERT_EQ(observer.results.size(), 2);
+  EXPECT_EQ(observer.results.back().id, b.id);
+  EXPECT_EQ(controller.cancel(a.id), Error::kNotFound);
 }
-
-TEST(ControllerTest, FailedConnectionDoesNotReplaceStoredProfile) {
-  FakeStore store;
-  FakeInterface interface;
-  roo_scheduler::Scheduler scheduler;
-  roo_wifi::Controller controller(store, interface, scheduler);
-  controller.begin();
-  controller.toggleEnabled();
-  interface.connect_result = false;
-
-  EXPECT_FALSE(controller.connect("Roo Secure", "secret"));
-  EXPECT_TRUE(store.getDefaultSSID().empty());
-  std::string password;
-  EXPECT_FALSE(store.getPassword("Roo Secure", password));
+// Verifies profile work is independent of radio work and cancellation is
+// deferred.
+TEST_F(BackendTest, IndependentSlotsAndCancelledSave) {
+  RequestResult scan = controller.scan();
+  ProfileSettings p;
+  p.connection = TestConfig();
+  CredentialUpdate u;
+  u.intent = CredentialIntent::kClear;
+  RequestResult save = controller.saveProfile(42, p, u);
+  ASSERT_NE(save.id, 0);
+  ASSERT_NE(scan.id, 0);
+  EXPECT_EQ(controller.cancel(save.id), Error::kOk);
+  EXPECT_TRUE(observer.results.empty());
+  Pump(scheduler);
+  Profile out;
+  EXPECT_EQ(store.loadProfile(42, out), Error::kNotFound);
+  ASSERT_EQ(observer.results.size(), 1);
+  EXPECT_EQ(observer.results[0].error, Error::kCancelled);
 }
-
-TEST(ControllerTest, SuccessfulConnectionIsNoLongerInProgressAfterGotIp) {
-  FakeStore store;
-  FakeInterface interface;
-  roo_scheduler::Scheduler scheduler;
-  roo_wifi::Controller controller(store, interface, scheduler);
-  controller.begin();
-  controller.toggleEnabled();
-
-  ASSERT_TRUE(controller.connect("Roo Secure", "secret"));
-  ASSERT_TRUE(controller.isConnecting());
-  interface.emit(roo_wifi::Interface::EV_GOT_IP);
-  scheduler.executeEligibleTasks();
-
-  EXPECT_FALSE(controller.isConnecting());
-  EXPECT_EQ(controller.currentNetworkStatus(), roo_wifi::WL_CONNECTED);
+// Verifies failed scans retain the old snapshot and repeated scans get new IDs.
+TEST_F(BackendTest, SnapshotLifetimeAndMetadata) {
+  ScanRecord record;
+  record.ssid = TestConfig().ssid;
+  record.security = AuthMode::kEnterprise;
+  record.bssid.bytes[5] = 42;
+  native.aps.push_back(record);
+  RequestResult a = controller.scan();
+  Pump(scheduler);
+  native.emit({NativeStation::Event::kScanDone});
+  Pump(scheduler);
+  ScanSnapshot snapshot = controller.scanSnapshot();
+  ASSERT_EQ(snapshot.count, 1);
+  EXPECT_EQ(snapshot.records[0].security, AuthMode::kEnterprise);
+  RequestResult b = controller.scan();
+  Pump(scheduler);
+  NativeStation::Event event{};
+  event.kind = NativeStation::Event::kScanDone;
+  event.error = Error::kConnectionFailed;
+  native.emit(event);
+  Pump(scheduler);
+  EXPECT_NE(a.id, b.id);
+  EXPECT_EQ(controller.scanSnapshot().generation, snapshot.generation);
+  EXPECT_EQ(snapshot.records[0].bssid.bytes[5], 42);
 }
-
-TEST(ControllerTest, SynchronousAuthenticationFailureKeepsAttemptedNetwork) {
-  FakeStore store;
-  FakeInterface interface;
-  interface.addScanResult("Roo Guest", -50, roo_wifi::WIFI_AUTH_OPEN);
-  interface.addScanResult("Roo Secure", -70, roo_wifi::WIFI_AUTH_WPA2_PSK);
-  roo_scheduler::Scheduler scheduler;
-  roo_wifi::Controller controller(store, interface, scheduler);
-  controller.begin();
-  controller.toggleEnabled();
-  interface.completeScan();
-  scheduler.executeEligibleTasks();
-
-  interface.connect_event = roo_wifi::Interface::EV_CONNECTION_FAILED;
-  ASSERT_TRUE(controller.connect("Roo Secure", "wrong"));
-  scheduler.executeEligibleTasks();
-
-  EXPECT_EQ("Roo Secure", controller.currentNetwork().ssid);
-  EXPECT_EQ(roo_wifi::WL_CONNECT_FAILED, controller.currentNetworkStatus());
+// Verifies explicit shutdown settles public work and queued native delivery is
+// inert.
+TEST_F(BackendTest, ShutdownNeutralizesQueuedEvents) {
+  RequestResult r = controller.connect(TestConfig(), {});
+  Pump(scheduler);
+  native.associated();
+  controller.shutdown();
+  Pump(scheduler);
+  ASSERT_EQ(observer.results.size(), 1);
+  EXPECT_EQ(observer.results[0].id, r.id);
+  EXPECT_EQ(observer.results[0].error, Error::kCancelled);
+  EXPECT_EQ(controller.scan().error, Error::kNotStarted);
 }
-
-TEST(ControllerTest, ConnectionFailureStaysWithPendingNetwork) {
-  FakeStore store;
-  FakeInterface interface;
-  interface.addScanResult("Roo Guest", -50, roo_wifi::WIFI_AUTH_OPEN);
-  interface.addScanResult("Roo Secure", -70, roo_wifi::WIFI_AUTH_WPA2_PSK);
-  roo_scheduler::Scheduler scheduler;
-  roo_wifi::Controller controller(store, interface, scheduler);
-  controller.begin();
-  controller.toggleEnabled();
-  interface.completeScan();
-  scheduler.executeEligibleTasks();
-
-  ASSERT_TRUE(controller.connect("Roo Guest", ""));
-  interface.emit(roo_wifi::Interface::EV_GOT_IP);
-  scheduler.executeEligibleTasks();
-  ASSERT_EQ("Roo Guest", controller.currentNetwork().ssid);
-
-  ASSERT_TRUE(controller.connect("Roo Secure", "wrong"));
-  // A refresh can still observe the previous access point while the new
-  // authentication attempt is in flight.
-  interface.emit(roo_wifi::Interface::EV_CONNECTION_FAILED);
-  scheduler.executeEligibleTasks();
-
-  EXPECT_EQ("Roo Secure", controller.currentNetwork().ssid);
-  EXPECT_EQ(roo_wifi::WL_CONNECT_FAILED, controller.currentNetworkStatus());
+// Verifies actual physical state remains observable after persistence failure.
+TEST_F(BackendTest, EnablePersistenceFailure) {
+  store.enabled_error = Error::kStorageFailure;
+  RequestResult r = controller.setEnabled(false);
+  Pump(scheduler);
+  EXPECT_FALSE(controller.isEnabled());
+  ASSERT_EQ(observer.results.size(), 1);
+  EXPECT_EQ(observer.results[0].id, r.id);
+  EXPECT_EQ(observer.results[0].error, Error::kStorageFailure);
 }
-
-TEST(ControllerTest, ConnectionFailureClearsOnlyRejectedPassword) {
-  FakeStore store;
-  store.setPassword("Roo Guest", "guest-password");
-  FakeInterface interface;
-  roo_scheduler::Scheduler scheduler;
-  roo_wifi::Controller controller(store, interface, scheduler);
-  controller.begin();
-  controller.toggleEnabled();
-
-  ASSERT_TRUE(controller.connect("Roo Secure", "wrong"));
-  interface.emit(roo_wifi::Interface::EV_CONNECTION_FAILED);
-  scheduler.executeEligibleTasks();
-
-  std::string password;
-  EXPECT_FALSE(controller.getStoredPassword("Roo Secure", password));
-  ASSERT_TRUE(controller.getStoredPassword("Roo Guest", password));
-  EXPECT_EQ("guest-password", password);
+// Verifies direct temporary connections leave persistence untouched.
+TEST_F(BackendTest, TemporaryConnectionDoesNotPersist) {
+  controller.connect(TestConfig(), {});
+  Pump(scheduler);
+  native.associated();
+  native.ready();
+  Pump(scheduler);
+  EXPECT_TRUE(store.values.empty());
 }
-
-TEST(ControllerTest, QueuedFailureCannotMoveToNewConnectionAttempt) {
-  FakeStore store;
-  FakeInterface interface;
-  interface.addScanResult("Roo Guest", -50, roo_wifi::WIFI_AUTH_OPEN);
-  interface.addScanResult("Roo Secure", -70, roo_wifi::WIFI_AUTH_WPA2_PSK);
-  roo_scheduler::Scheduler scheduler;
-  roo_wifi::Controller controller(store, interface, scheduler);
-  controller.begin();
-  controller.toggleEnabled();
-  interface.completeScan();
-  scheduler.executeEligibleTasks();
-
-  ASSERT_TRUE(controller.connect("Roo Secure", "wrong"));
-  ASSERT_TRUE(controller.connect("Roo Guest", ""));
-  // The old hardware attempt reports its failure only after Guest has become
-  // the pending target.
-  interface.emit(roo_wifi::Interface::EV_CONNECTION_FAILED, "Roo Secure");
-  scheduler.executeEligibleTasks();
-
-  EXPECT_EQ("Roo Guest", controller.currentNetwork().ssid);
-  EXPECT_EQ(roo_wifi::WL_DISCONNECTED, controller.currentNetworkStatus());
-  EXPECT_TRUE(controller.isConnecting());
-  std::string password;
-  EXPECT_FALSE(controller.getStoredPassword("Roo Secure", password));
-
-  interface.emit(roo_wifi::Interface::EV_GOT_IP);
-  scheduler.executeEligibleTasks();
-  EXPECT_EQ("Roo Guest", controller.currentNetwork().ssid);
-  EXPECT_EQ(roo_wifi::WL_CONNECTED, controller.currentNetworkStatus());
+// Verifies all write interruptions leave either the previous ready record or
+// Incomplete.
+TEST(StoreTest, EveryInterruptedWriteAndRepair) {
+  ProfileSettings p;
+  p.connection = TestConfig();
+  CredentialUpdate u;
+  u.intent = CredentialIntent::kClear;
+  for (int failure = 1; failure <= 16; ++failure) {
+    MemoryStore store;
+    ASSERT_EQ(store.saveProfile(1, p, u).error, Error::kOk);
+    store.fail_at = store.writes + failure;
+    p.connection.hidden = true;
+    SaveResult result = store.saveProfile(1, p, u);
+    EXPECT_NE(result.error, Error::kOk);
+    Profile out;
+    Error read = store.loadProfile(1, out);
+    EXPECT_EQ(read, failure == 1 ? Error::kOk : Error::kIncomplete);
+    if (failure != 1) {
+      CredentialUpdate keep;
+      EXPECT_NE(store.saveProfile(1, p, keep).error, Error::kOk);
+    }
+    store.fail_at = -1;
+    EXPECT_EQ(store.saveProfile(1, p, u).error, Error::kOk);
+    EXPECT_EQ(store.loadProfile(1, out), Error::kOk);
+    EXPECT_TRUE(out.settings.connection.hidden);
+  }
 }
-
-TEST(ControllerTest, DelayedPreviousNetworkEventCannotReplaceFailedTarget) {
-  FakeStore store;
-  FakeInterface interface;
-  interface.addScanResult("Roo Guest", -50, roo_wifi::WIFI_AUTH_OPEN);
-  interface.addScanResult("Roo Secure", -70, roo_wifi::WIFI_AUTH_WPA2_PSK);
-  roo_scheduler::Scheduler scheduler;
-  roo_wifi::Controller controller(store, interface, scheduler);
-  controller.begin();
-  controller.toggleEnabled();
-  interface.completeScan();
-  scheduler.executeEligibleTasks();
-
-  ASSERT_TRUE(controller.connect("Roo Guest", ""));
-  interface.emit(roo_wifi::Interface::EV_GOT_IP);
-  scheduler.executeEligibleTasks();
-  ASSERT_EQ("Roo Guest", controller.currentNetwork().ssid);
-
-  ASSERT_TRUE(controller.connect("Roo Secure", "wrong"));
-  interface.emit(roo_wifi::Interface::EV_CONNECTION_FAILED, "Roo Secure");
-  scheduler.executeEligibleTasks();
-  ASSERT_EQ("Roo Secure", controller.currentNetwork().ssid);
-  ASSERT_EQ(roo_wifi::WL_CONNECT_FAILED, controller.currentNetworkStatus());
-
-  // Disconnecting the old AP can be reported after the new attempt's
-  // authentication failure. It must not replace the failed target.
-  interface.emit(roo_wifi::Interface::EV_DISCONNECTED, "Roo Guest");
-  scheduler.executeEligibleTasks();
-
-  EXPECT_EQ("Roo Secure", controller.currentNetwork().ssid);
-  EXPECT_EQ(roo_wifi::WL_CONNECT_FAILED, controller.currentNetworkStatus());
+// Verifies deleted markers prevent resurrection when cleanup fails and can be
+// retried.
+TEST(StoreTest, FailedDeleteCleanupAndRetry) {
+  MemoryStore store;
+  ProfileSettings p;
+  p.connection = TestConfig();
+  CredentialUpdate u;
+  u.intent = CredentialIntent::kClear;
+  ASSERT_EQ(store.saveProfile(7, p, u).error, Error::kOk);
+  store.fail_at = store.writes + 2;
+  EXPECT_EQ(store.removeProfile(7), Error::kStorageFailure);
+  Profile out;
+  EXPECT_EQ(store.loadProfile(7, out), Error::kNotFound);
+  store.fail_at = -1;
+  EXPECT_EQ(store.removeProfile(7), Error::kOk);
+  EXPECT_EQ(store.values.size(), 1);
 }
-
-TEST(ControllerTest, RefreshCannotReplaceFailedTargetWithPreviousAccessPoint) {
-  FakeStore store;
-  FakeInterface interface;
-  interface.addScanResult("Roo Guest", -50, roo_wifi::WIFI_AUTH_OPEN);
-  interface.addScanResult("Roo Secure", -70, roo_wifi::WIFI_AUTH_WPA2_PSK);
-  roo_scheduler::Scheduler scheduler;
-  roo_wifi::Controller controller(store, interface, scheduler);
-  controller.begin();
-  controller.toggleEnabled();
-  interface.completeScan();
-  scheduler.executeEligibleTasks();
-
-  ASSERT_TRUE(controller.connect("Roo Secure", "wrong"));
-  interface.emit(roo_wifi::Interface::EV_CONNECTION_FAILED, "Roo Secure");
-  scheduler.executeEligibleTasks();
-  ASSERT_EQ(roo_wifi::WL_CONNECT_FAILED, controller.currentNetworkStatus());
-
-  // A periodic refresh can briefly observe the AP from before this attempt.
-  interface.setApInfo("Roo Guest", -50, roo_wifi::WL_CONNECTED);
-  controller.resume();
-
-  EXPECT_EQ("Roo Secure", controller.currentNetwork().ssid);
-  EXPECT_EQ(roo_wifi::WL_CONNECT_FAILED, controller.currentNetworkStatus());
+// Verifies Keep retains credentials, and metadata reads never return secret
+// bytes.
+TEST(StoreTest, ExplicitCredentialIntent) {
+  MemoryStore store;
+  ProfileSettings p;
+  p.connection = TestConfig();
+  p.connection.security = AuthMode::kWpa2Personal;
+  CredentialUpdate u;
+  u.intent = CredentialIntent::kReplace;
+  u.replacement.size = 8;
+  memcpy(u.replacement.bytes, "password", 8);
+  ASSERT_EQ(store.saveProfile(9, p, u).error, Error::kOk);
+  u.intent = CredentialIntent::kKeep;
+  p.connection.hidden = true;
+  EXPECT_EQ(store.saveProfile(9, p, u).error, Error::kOk);
+  Credentials c;
+  EXPECT_EQ(store.loadCredentials(9, c), Error::kOk);
+  EXPECT_EQ(c.size, 8);
+  u.intent = CredentialIntent::kClear;
+  u.replacement = {};
+  EXPECT_EQ(store.saveProfile(9, p, u).error, Error::kInvalidArgument);
 }
+// Verifies static IPv4 and security values are validated independently of a UI.
+TEST(ConfigurationTest, InvalidIpAndCredentialEncoding) {
+  ConnectionConfig c = TestConfig();
+  c.ip_mode = IpMode::kStaticIpv4;
+  EXPECT_EQ(Validate(c, {}), Error::kInvalidArgument);
+  c.static_ipv4.address = {{192, 168, 1, 2}};
+  c.static_ipv4.gateway = {{192, 168, 1, 1}};
+  c.static_ipv4.dns1 = {{1, 1, 1, 1}};
+  EXPECT_EQ(Validate(c, {}), Error::kOk);
+  c.static_ipv4.gateway = {{10, 0, 0, 1}};
+  EXPECT_EQ(Validate(c, {}), Error::kInvalidArgument);
+  c = TestConfig();
+  c.security = AuthMode::kUnknown;
+  EXPECT_EQ(Validate(c, {}), Error::kUnsupported);
+}
+}  // namespace roo_wifi
+namespace roo_wifi {
+// Verifies an unsettled cancellation produces one Timeout and permanently
+// closes radio admission while radio-off profile management remains available.
+TEST(TimeoutTest, UnsettledNativeWorkCannotOverlapNewAttempt) {
+  roo_scheduler::Scheduler scheduler;
+  TestStation native;
+  OrderedInterface radio(native);
+  MemoryStore store;
+  store.enabled = true;
+  ControllerOptions options;
+  options.connect_timeout_ms = 1;
+  options.transition_timeout_ms = 1;
+  Controller controller(radio, store, scheduler, options);
+  Observer observer;
+  controller.addListener(observer);
+  controller.begin();
+  Pump(scheduler);
+  observer.results.clear();
+  RequestResult request = controller.connect(TestConfig(), {});
+  Pump(scheduler);
+  scheduler.delay(roo_time::Millis(6));
+  Pump(scheduler);
+  ASSERT_EQ(observer.results.size(), 1u);
+  EXPECT_EQ(observer.results[0].id, request.id);
+  EXPECT_EQ(observer.results[0].error, Error::kTimeout);
+  native.disconnected();
+  Pump(scheduler);
+  EXPECT_EQ(observer.results.size(), 1u);
+  EXPECT_EQ(controller.connect(TestConfig(), {}).error, Error::kNotStarted);
+  ProfileSettings settings;
+  settings.connection = TestConfig();
+  CredentialUpdate update;
+  update.intent = CredentialIntent::kClear;
+  EXPECT_NE(controller.saveProfile(1, settings, update).id, 0u);
+  Pump(scheduler);
+  EXPECT_EQ(observer.results.back().error, Error::kOk);
+  controller.removeListener(observer);
+}
+// Verifies disabled provisioning, startup selection, and owned profile input.
+TEST(StartupTest, KnownProfileAndAdmissionSnapshot) {
+  roo_scheduler::Scheduler scheduler;
+  TestStation native;
+  OrderedInterface radio(native);
+  MemoryStore store;
+  ProfileSettings settings;
+  settings.connection = TestConfig("saved");
+  CredentialUpdate update;
+  update.intent = CredentialIntent::kClear;
+  ControllerOptions options;
+  options.startup_profile = 1;
+  Controller controller(radio, store, scheduler, options);
+  ASSERT_EQ(controller.begin(), Error::kOk);
+  Pump(scheduler);
+  ASSERT_FALSE(controller.isEnabled());
+  EXPECT_NE(controller.saveProfile(1, settings, update).id, 0u);
+  Pump(scheduler);
+  EXPECT_EQ(native.connects, 0);
+  controller.setEnabled(true);
+  Pump(scheduler);
+  EXPECT_EQ(native.connects, 1);
+  EXPECT_EQ(native.last_config.ssid.bytes[0], 's');
+  settings.connection = TestConfig("changed");
+  controller.saveProfile(1, settings, update);
+  Pump(scheduler);
+  EXPECT_EQ(native.last_config.ssid.bytes[0], 's');
+}
+// Verifies successful persistence remains saved after a connection fails.
+TEST_F(BackendTest, SavedProfileSurvivesNativeRejection) {
+  ProfileSettings settings;
+  settings.connection = TestConfig();
+  CredentialUpdate update;
+  update.intent = CredentialIntent::kClear;
+  controller.saveProfile(1, settings, update);
+  Pump(scheduler);
+  native.rejection = Error::kConnectionFailed;
+  RequestResult request = controller.connect(1);
+  Pump(scheduler);
+  EXPECT_EQ(observer.results.back().id, request.id);
+  EXPECT_EQ(observer.results.back().error, Error::kConnectionFailed);
+  Profile out;
+  EXPECT_EQ(controller.loadProfile(1, out), Error::kOk);
+}
+// Verifies cancellation before queued native execution emits one result and no
+// connection.
+TEST_F(BackendTest, CancelBeforeNativeStart) {
+  RequestResult request = controller.connect(TestConfig(), {});
+  EXPECT_EQ(controller.cancel(request.id), Error::kOk);
+  Pump(scheduler);
+  EXPECT_EQ(native.connects, 0);
+  ASSERT_EQ(observer.results.size(), 1u);
+  EXPECT_EQ(observer.results[0].error, Error::kCancelled);
+}
+// Verifies bounded event overflow faults radio admission instead of reusing
+// lost identity.
+TEST_F(BackendTest, NativeHandoffOverflowFailsClosed) {
+  RequestResult request = controller.scan();
+  Pump(scheduler);
+  for (int i = 0; i < 20; ++i) native.emit({NativeStation::Event::kScanDone});
+  Pump(scheduler);
+  ASSERT_EQ(observer.results.size(), 1u);
+  EXPECT_EQ(observer.results[0].id, request.id);
+  EXPECT_EQ(observer.results[0].error, Error::kConnectionFailed);
+  controller.scan();
+  Pump(scheduler);
+  EXPECT_EQ(observer.results.back().error, Error::kNotStarted);
+}
+}  // namespace roo_wifi
+namespace roo_wifi {
+// Verifies a failed ready write is reread, distinguishing confirmed completion
+// from an unreadable commit outcome without claiming atomic replacement.
+TEST(StoreTest, FinalCommitVerification) {
+  class AmbiguousStore : public MemoryStore {
+   public:
+    Error writeField(const char* key, const uint8_t* data,
+                     size_t size) override {
+      Error error = MemoryStore::writeField(key, data, size);
+      if (std::string(key) == "00000001state" && data[0] == 0x11) {
+        final_written = true;
+        return Error::kStorageFailure;
+      }
+      return error;
+    }
+    Error readField(const char* key, uint8_t* out,
+                    size_t& size) const override {
+      if (final_written && unreadable) return Error::kStorageFailure;
+      return MemoryStore::readField(key, out, size);
+    }
+    bool final_written = false, unreadable = false;
+  } store;
+  ProfileSettings settings;
+  settings.connection = TestConfig();
+  CredentialUpdate update;
+  update.intent = CredentialIntent::kClear;
+  EXPECT_EQ(store.saveProfile(1, settings, update).error, Error::kOk);
+  store.unreadable = true;
+  EXPECT_EQ(store.saveProfile(1, settings, update).error,
+            Error::kCommitUnknown);
+  Profile untouched;
+  untouched.id = 99;
+  EXPECT_EQ(store.loadProfile(1, untouched), Error::kStorageFailure);
+  EXPECT_EQ(untouched.id, 99u);
+}
+}  // namespace roo_wifi
 
-}  // namespace
+namespace roo_wifi {
+// Verifies a failed second owner cannot detach an already-owned Interface.
+TEST(OwnershipTest, FailedBeginDoesNotShutdownExistingOwner) {
+  roo_scheduler::Scheduler scheduler;
+  TestStation native;
+  OrderedInterface radio(native);
+  MemoryStore store;
+  store.enabled = true;
+  Controller first(radio, store, scheduler), second(radio, store, scheduler);
+  ASSERT_EQ(first.begin(), Error::kOk);
+  Pump(scheduler);
+  EXPECT_EQ(second.begin(), Error::kBusy);
+  EXPECT_NE(first.connect(TestConfig(), {}).id, 0u);
+  Pump(scheduler);
+  EXPECT_EQ(native.connects, 1);
+}
+}  // namespace roo_wifi

@@ -3,7 +3,7 @@ load("@rules_cc//cc:cc_test.bzl", "cc_test")
 
 cc_library(
     name = "roo_wifi",
-    srcs = ["src/roo_wifi/controller.cpp"],
+    srcs = glob(["src/roo_wifi/*.cpp", "src/roo_wifi/hal/*.cpp"]),
     hdrs = glob(["src/**/*.h"], exclude = ["src/roo_wifi/hal/esp32/**", "src/roo_wifi/esp32.h"]),
     includes = ["src"],
     visibility = ["//visibility:public"],

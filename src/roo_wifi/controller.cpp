@@ -1,484 +1,368 @@
 #include "roo_wifi/controller.h"
 
+#include <algorithm>
+#include <limits>
+
 namespace roo_wifi {
-
-namespace {
-
-ConnectionStatus GetConnectionStatus(Interface::EventType type) {
-  switch (type) {
-    case Interface::EV_CONNECTED:
-      return WL_IDLE_STATUS;
-    case Interface::EV_GOT_IP:
-      return WL_CONNECTED;
-    case Interface::EV_DISCONNECTED:
-      return WL_DISCONNECTED;
-    case Interface::EV_CONNECTION_FAILED:
-      return WL_CONNECT_FAILED;
-    case Interface::EV_CONNECTION_LOST:
-      return WL_CONNECTION_LOST;
-    default:
-      return WL_CONNECT_FAILED;
-  }
-}
-
-}  // namespace
-
-Controller::Controller(Store& store, Interface& interface,
-                       roo_scheduler::Scheduler& scheduler)
-    : store_(store),
-      interface_(interface),
+Controller::Controller(Interface &interface, Store &store,
+                       roo_scheduler::Scheduler &scheduler,
+                       ControllerOptions options)
+    : interface_(interface),
+      store_(store),
       scheduler_(scheduler),
-      event_dispatch_state_(std::make_shared<EventDispatchState>(this)),
-      enabled_(false),
-      current_network_(),
-      current_network_index_(-1),
-      current_network_status_(WL_NO_SSID_AVAIL),
-      all_networks_(),
-      wifi_listener_(*this),
-      model_listeners_(),
-      connecting_(false),
-      connection_target_ssid_(),
-      connection_generation_(0),
-      listener_attached_(false),
-      paused_(true),
-      start_scan_(scheduler, [this]() { startScan(); }),
-      refresh_current_network_(scheduler,
-                               [this]() { periodicRefreshCurrentNetwork(); }) {}
+      options_(options),
+      work_(scheduler, [this] { execute(); }),
+      timer_(scheduler, [this] { checkTimeouts(); }),
+      reconnect_(scheduler, [this] { startProfile(); }) {
+  records_.resize(options.max_scan_results);
+}
 
-Controller::~Controller() { shutdown(); }
+Controller::~Controller() { close(false); }
+Error Controller::begin() {
+  if (closed_) return Error::kNotStarted;
+  if (started_) return Error::kBusy;
+  Error error = store_.begin();
+  if (error != Error::kOk) return error;
+  bool enabled = false;
+  error = store_.readEnabled(enabled);
+  if (error != Error::kOk && error != Error::kNotFound) return error;
+  error = interface_.begin(*this, scheduler_);
+  if (error != Error::kOk) return error;
+  started_ = true;
+  return setEnabled(enabled).error;
+}
 
-void Controller::shutdown() {
-  {
-    roo::lock_guard<roo::mutex> lock(event_dispatch_state_->mutex);
-    event_dispatch_state_->controller = nullptr;
+void Controller::close(bool notify) {
+  if (closed_) return;
+  closed_ = true;
+  work_.cancel();
+  timer_.cancel();
+  reconnect_.cancel();
+  if (started_) interface_.shutdown();
+  if (notify) {
+    for (Slot *slot : {&station_, &scan_, &write_})
+      if (slot->result.id) finish(*slot, Error::kCancelled);
   }
-  start_scan_.cancel();
-  refresh_current_network_.cancel();
-  if (listener_attached_) {
-    interface_.removeEventListener(&wifi_listener_);
-    listener_attached_ = false;
+  station_ = {};
+  scan_ = {};
+  write_ = {};
+  credentials_ = {};
+  update_ = {};
+  snapshot_ = {};
+  link_ = {};
+  enabled_ = false;
+  started_ = false;
+}
+
+void Controller::shutdown() { close(true); }
+void Controller::addListener(Listener &listener) {
+  if (std::find(listeners_.begin(), listeners_.end(), &listener) ==
+      listeners_.end())
+    listeners_.push_back(&listener);
+}
+
+void Controller::removeListener(Listener &listener) {
+  listeners_.erase(std::remove(listeners_.begin(), listeners_.end(), &listener),
+                   listeners_.end());
+}
+
+Support Controller::support() const { return interface_.support(); }
+bool Controller::isEnabled() const { return enabled_; }
+bool Controller::isScanning() const { return scan_.result.id != 0; }
+ScanSnapshot Controller::scanSnapshot() const { return snapshot_; }
+LinkState Controller::linkState() const { return link_; }
+Error Controller::loadProfile(ProfileId id, Profile &out) const {
+  if (!started_ || closed_) return Error::kNotStarted;
+  if (!id) return Error::kInvalidArgument;
+  return store_.loadProfile(id, out);
+}
+
+Error Controller::radioAdmission() const {
+  if (!started_ || closed_) return Error::kNotStarted;
+  if (faulted_) return Error::kNotStarted;
+  return Error::kOk;
+}
+
+RequestResult Controller::admit(Slot &slot, OperationKind kind,
+                                ProfileId profile) {
+  if (!started_ || closed_) return {0, Error::kNotStarted};
+  if (slot.result.id) return {0, Error::kBusy};
+  if (next_id_ == std::numeric_limits<OperationId>::max())
+    return {0, Error::kBusy};
+  slot = {};
+  slot.result = {next_id_++, kind, Error::kOk, profile};
+  work_.scheduleNow();
+  return {slot.result.id, Error::kOk};
+}
+
+RequestResult Controller::setEnabled(bool enabled) {
+  Error error = radioAdmission();
+  if (error != Error::kOk) return {0, error};
+  if (scan_.result.id) return {0, Error::kBusy};
+  RequestResult result = admit(station_, OperationKind::kEnable);
+  if (result.id) {
+    desired_enabled_ = enabled;
+    reconnect_.cancel();
+    reconnect_profile_ = 0;
   }
+  return result;
 }
 
-void Controller::enqueueInterfaceEvent(Interface::EventType type,
-                                       roo::string_view event_ssid) {
-  std::string ssid(event_ssid.data(), event_ssid.size());
-  uint64_t connection_generation;
-  {
-    roo::lock_guard<roo::mutex> lock(connection_state_mutex_);
-    if (ssid.empty()) ssid = connection_target_ssid_;
-    connection_generation = connection_generation_;
+RequestResult Controller::scan() {
+  Error error = radioAdmission();
+  if (error != Error::kOk) return {0, error};
+  if (!enabled_) return {0, Error::kDisabled};
+  if (station_.result.id ||
+      (link_.phase != LinkPhase::kIdle && !support().scan_while_connected))
+    return {0, Error::kBusy};
+  return admit(scan_, OperationKind::kScan);
+}
+
+RequestResult Controller::connect(const ConnectionConfig &config,
+                                  const Credentials &credential) {
+  Error error = radioAdmission();
+  if (error != Error::kOk) return {0, error};
+  if (!enabled_) return {0, Error::kDisabled};
+  if (scan_.result.id) return {0, Error::kBusy};
+  error = Validate(config, credential);
+  if (error != Error::kOk) return {0, error};
+  error = ValidateSupport(config, support());
+  if (error != Error::kOk) return {0, error};
+  RequestResult result = admit(station_, OperationKind::kConnect);
+  if (result.id) {
+    config_ = config;
+    credentials_ = credential;
+    reconnect_profile_ = 0;
+    reconnect_.cancel();
   }
-  std::shared_ptr<EventDispatchState> state = event_dispatch_state_;
-  scheduler_.scheduleNow([state, type, ssid, connection_generation]() {
-    roo::lock_guard<roo::mutex> lock(state->mutex);
-    if (state->controller != nullptr) {
-      state->controller->onInterfaceEvent(type, ssid, connection_generation);
-    }
-  });
+  return result;
 }
 
-void Controller::onInterfaceEvent(Interface::EventType type,
-                                  const std::string& ssid,
-                                  uint64_t connection_generation) {
-  if (paused_ || !enabled_) return;
-  switch (type) {
-    case Interface::EV_SCAN_COMPLETED:
-      onScanCompleted();
-      break;
-    default:
-      onConnectionStateChanged(type, ssid, connection_generation);
-      break;
+RequestResult Controller::connect(ProfileId id) {
+  Profile profile;
+  Credentials credential;
+  Error error = loadProfile(id, profile);
+  if (error != Error::kOk) return {0, error};
+  error = store_.loadCredentials(id, credential);
+  if (error != Error::kOk) return {0, error};
+  RequestResult result = connect(profile.settings.connection, credential);
+  if (result.id) {
+    station_.result.profile_id = id;
+    reconnect_profile_ = profile.settings.auto_connect ? id : 0;
   }
+  return result;
 }
 
-void Controller::begin() {
-  if (!listener_attached_) {
-    interface_.addEventListener(&wifi_listener_);
-    listener_attached_ = true;
+RequestResult Controller::disconnect() {
+  Error error = radioAdmission();
+  if (error != Error::kOk) return {0, error};
+  RequestResult result = admit(station_, OperationKind::kDisconnect);
+  if (result.id) {
+    reconnect_profile_ = 0;
+    reconnect_.cancel();
   }
-  enabled_ = store_.getIsInterfaceEnabled();
-  interface_.setEnabled(enabled_);
-  if (!enabled_) return;
-  notifyEnableChanged();
-  std::string ssid = store_.getDefaultSSID();
-  if (!ssid.empty()) {
-    connect();
+  return result;
+}
+
+RequestResult Controller::saveProfile(ProfileId id,
+                                      const ProfileSettings &settings,
+                                      const CredentialUpdate &credential) {
+  if (!id) return {0, Error::kInvalidArgument};
+  RequestResult result = admit(write_, OperationKind::kSave, id);
+  if (result.id) {
+    settings_ = settings;
+    update_ = credential;
   }
-  resume();
+  return result;
 }
 
-void Controller::addListener(Listener* listener) {
-  model_listeners_.insert(listener);
+RequestResult Controller::removeProfile(ProfileId id) {
+  if (!id) return {0, Error::kInvalidArgument};
+  return admit(write_, OperationKind::kRemove, id);
 }
 
-void Controller::removeListener(Listener* listener) {
-  model_listeners_.erase(listener);
-}
-
-int Controller::otherScannedNetworksCount() const {
-  int count = all_networks_.size();
-  if (current_network_index_ >= 0) --count;
-  return count;
-}
-
-const Controller::Network& Controller::currentNetwork() const {
-  return current_network_;
-}
-
-const Controller::Network* Controller::lookupNetwork(
-    const std::string& ssid) const {
-  for (const Network& net : all_networks_) {
-    if (net.ssid == ssid) return &net;
-  }
+Controller::Slot *Controller::find(OperationId id) {
+  if (!id) return nullptr;
+  for (Slot *slot : {&station_, &scan_, &write_})
+    if (slot->result.id == id) return slot;
   return nullptr;
 }
 
-ConnectionStatus Controller::currentNetworkStatus() const {
-  return current_network_status_;
+Error Controller::cancel(OperationId id) {
+  Slot *slot = find(id);
+  if (!slot) return Error::kNotFound;
+  if (slot == &write_ && slot->started) return Error::kBusy;
+  if (slot->cancelled || slot->timed_out) return Error::kOk;
+  if (slot->started) {
+    Error error = interface_.cancel(id);
+    if (error != Error::kOk) return error;
+    slot->deadline = roo_time::Uptime::Now() +
+                     roo_time::Millis(options_.transition_timeout_ms);
+  }
+  slot->cancelled = true;
+  if (slot == &station_) {
+    reconnect_profile_ = 0;
+    reconnect_.cancel();
+  }
+  work_.scheduleNow();
+  return Error::kOk;
 }
 
-const Controller::Network& Controller::otherNetwork(int idx) const {
-  if (current_network_index_ >= 0 && idx >= current_network_index_) {
-    idx++;
-  }
-  return all_networks_[idx];
-}
-
-bool Controller::startScan() {
-  if (!enabled_ || paused_) return false;
-  bool started = interface_.startScan();
-  if (started) {
-    for (auto& l : model_listeners_) {
-      l->onScanStarted();
-    };
-  }
-  return started;
-}
-
-void Controller::toggleEnabled() {
-  enabled_ = !enabled_;
-  store_.setIsInterfaceEnabled(enabled_);
-  if (!enabled_) {
-    interface_.disconnect();
-    roo::lock_guard<roo::mutex> lock(connection_state_mutex_);
-    connection_target_ssid_.clear();
-    ++connection_generation_;
-  }
-  interface_.setEnabled(enabled_);
-  connecting_ = false;
-  notifyEnableChanged();
-  if (enabled_) {
-    if (!store_.getDefaultSSID().empty()) {
-      connect();
+void Controller::execute() {
+  if (closed_) return;
+  // Capture IDs: a listener's follow-up admission must wait for the next task.
+  OperationId ids[] = {station_.result.id, scan_.result.id, write_.result.id};
+  for (OperationId id : ids) {
+    Slot *slot = find(id);
+    if (!slot || slot->started) continue;
+    if (slot->cancelled) {
+      finish(*slot, Error::kCancelled);
+      continue;
     }
-    resume();
-  } else {
-    pause();
-  }
-}
-
-void Controller::notifyEnableChanged() {
-  for (auto& l : model_listeners_) {
-    l->onEnableChanged(enabled_);
-  };
-}
-
-bool Controller::getStoredPassword(const std::string& ssid,
-                                   std::string& passwd) const {
-  return store_.getPassword(ssid, passwd);
-}
-
-void Controller::pause() {
-  paused_ = true;
-  start_scan_.cancel();
-  refresh_current_network_.cancel();
-}
-
-void Controller::resume() {
-  paused_ = false;
-  if (!enabled_) return;
-  refreshCurrentNetwork();
-  if (!refresh_current_network_.is_scheduled()) {
-    refresh_current_network_.scheduleAfter(roo_time::Seconds(2));
-  }
-  if (interface_.scanCompleted()) {
-    for (auto& l : model_listeners_) {
-      l->onScanCompleted();
-    };
-    start_scan_.scheduleAfter(roo_time::Seconds(15));
-  } else {
-    startScan();
-  }
-}
-
-void Controller::setPassword(const std::string& ssid,
-                             const std::string& passwd) {
-  store_.setPassword(ssid, passwd);
-}
-
-bool Controller::connect() {
-  std::string ssid = store_.getDefaultSSID();
-  if (ssid.empty()) return false;
-  std::string password;
-  store_.getPassword(ssid, password);
-  return connect(ssid, password);
-}
-
-bool Controller::connect(const std::string& ssid, const std::string& passwd) {
-  if (!enabled_ || ssid.empty()) return false;
-  std::string default_ssid = store_.getDefaultSSID();
-  std::string current_password;
-  // The adapter can synchronously publish an event while connect() is in
-  // progress. Set the target first so that event has an unambiguous owner.
-  uint64_t connection_generation;
-  std::string previous_connection_target;
-  {
-    roo::lock_guard<roo::mutex> lock(connection_state_mutex_);
-    previous_connection_target = connection_target_ssid_;
-    connection_target_ssid_ = ssid;
-    connection_generation = ++connection_generation_;
-  }
-  if (!interface_.connect(ssid, passwd)) {
-    roo::lock_guard<roo::mutex> lock(connection_state_mutex_);
-    if (connection_generation_ == connection_generation) {
-      connection_target_ssid_ = previous_connection_target;
+    slot->started = true;
+    Error error = Error::kOk;
+    switch (slot->result.kind) {
+      case OperationKind::kSave:
+        error = store_.saveProfile(slot->result.profile_id, settings_, update_)
+                    .error;
+        update_ = {};
+        break;
+      case OperationKind::kRemove:
+        error = store_.removeProfile(slot->result.profile_id);
+        break;
+      case OperationKind::kEnable:
+        error = interface_.setEnabled(id, desired_enabled_);
+        break;
+      case OperationKind::kConnect:
+        error = interface_.connect(id, config_, credentials_);
+        credentials_ = {};
+        break;
+      case OperationKind::kDisconnect:
+        error = interface_.disconnect(id);
+        break;
+      case OperationKind::kScan:
+        for (Listener *listener : listeners_)
+          listener->onScanStateChanged(true);
+        error = interface_.scan(id, options_.max_scan_results);
+        break;
     }
-    return false;
-  }
-  if (ssid != default_ssid) {
-    store_.setDefaultSSID(ssid);
-  }
-  if (!store_.getPassword(ssid, current_password) ||
-      current_password != passwd) {
-    store_.setPassword(ssid, passwd);
-  }
-  connecting_ = true;
-  const Network* in_range = lookupNetwork(ssid);
-  if (in_range == nullptr) {
-    updateCurrentNetwork(ssid, passwd.empty(), -128, WL_DISCONNECTED, true);
-  } else {
-    updateCurrentNetwork(ssid, in_range->open, in_range->rssi, WL_DISCONNECTED,
-                         true);
-  }
-  return true;
-}
-
-void Controller::disconnect() {
-  connecting_ = false;
-  {
-    roo::lock_guard<roo::mutex> lock(connection_state_mutex_);
-    connection_target_ssid_.clear();
-    ++connection_generation_;
-  }
-  interface_.disconnect();
-}
-
-void Controller::forget(const std::string& ssid) {
-  store_.clearPassword(ssid);
-  if (ssid == store_.getDefaultSSID()) {
-    store_.clearDefaultSSID();
-    interface_.clearPersistentCredentials();
-  }
-}
-
-void Controller::onConnectionStateChanged(Interface::EventType type,
-                                          const std::string& event_ssid,
-                                          uint64_t connection_generation) {
-  if (type == Interface::EV_UNKNOWN) return;
-  {
-    roo::lock_guard<roo::mutex> lock(connection_state_mutex_);
-    if (connection_generation != connection_generation_ ||
-        (!event_ssid.empty() && !connection_target_ssid_.empty() &&
-         event_ssid != connection_target_ssid_)) {
-      if (type == Interface::EV_CONNECTION_FAILED && !event_ssid.empty()) {
-        store_.clearPassword(event_ssid);
-      }
-      return;
+    if (slot == &write_ || error != Error::kOk) {
+      finish(*slot, error);
+      continue;
     }
+    uint32_t timeout = slot == &scan_ ? options_.scan_timeout_ms
+                       : slot->result.kind == OperationKind::kConnect
+                           ? options_.connect_timeout_ms
+                           : options_.transition_timeout_ms;
+    slot->deadline = roo_time::Uptime::Now() + roo_time::Millis(timeout);
   }
-  if (type == Interface::EV_DISCONNECTED ||
-      type == Interface::EV_CONNECTION_FAILED ||
-      type == Interface::EV_CONNECTION_LOST) {
-    connecting_ = false;
-  }
-  if (type == Interface::EV_CONNECTED || type == Interface::EV_GOT_IP) {
-    connecting_ = false;
-  }
-  const std::string& ssid =
-      event_ssid.empty() ? current_network_.ssid : event_ssid;
-  if (type == Interface::EV_CONNECTION_FAILED && !ssid.empty()) {
-    // An authentication failure proves that the credential for this network
-    // is unusable. Do not silently retry it the next time the network is
-    // selected; let the UI ask for a replacement password instead.
-    store_.clearPassword(ssid);
-  }
-  const Network* network = lookupNetwork(ssid);
-  updateCurrentNetwork(
-      ssid, network == nullptr ? current_network_.open : network->open,
-      network == nullptr ? current_network_.rssi : network->rssi,
-      GetConnectionStatus(type), true);
-  for (auto& l : model_listeners_) {
-    l->onConnectionStateChanged(type);
-  }
+  if (station_.result.id || scan_.result.id)
+    timer_.scheduleAfter(roo_time::Millis(1));
 }
 
-void Controller::periodicRefreshCurrentNetwork() {
-  refreshCurrentNetwork();
-  if (isEnabled() && !paused_) {
-    refresh_current_network_.scheduleAfter(roo_time::Seconds(2));
-  }
-}
-
-void Controller::refreshCurrentNetwork() {
-  // If we're connected to the network, this is it.
-  NetworkDetails current;
-  if (interface_.getApInfo(&current)) {
-    std::string reported_ssid((const char*)current.ssid,
-                              strlen((const char*)current.ssid));
-    std::string connection_target;
-    {
-      roo::lock_guard<roo::mutex> lock(connection_state_mutex_);
-      connection_target = connection_target_ssid_;
-    }
-    bool preserve_target = connecting_ ||
-                           current_network_status_ == WL_CONNECT_FAILED ||
-                           current_network_status_ == WL_CONNECTION_LOST;
-    if (preserve_target && !connection_target.empty() &&
-        reported_ssid != connection_target) {
-      // The adapter can briefly continue reporting the previous AP while a
-      // new attempt is in flight or after that attempt has failed.
-      return;
-    }
-    updateCurrentNetwork(reported_ssid, (current.authmode == WIFI_AUTH_OPEN),
-                         current.rssi, current.status, false);
-  } else {
-    // Check if we have a default network.
-    std::string default_ssid = store_.getDefaultSSID();
-    const Network* default_network_in_range = nullptr;
-    if (!default_ssid.empty()) {
-      // See if the default network is in range according to the latest
-      // scan results.
-      default_network_in_range = lookupNetwork(default_ssid);
-    }
-    // Keep erroneous states sticky. Only update if the network has actually
-    // changed.
-    if (default_network_in_range == nullptr) {
-      ConnectionStatus new_status = (default_ssid == current_network_.ssid)
-                                        ? current_network_status_
-                                        : WL_NO_SSID_AVAIL;
-      updateCurrentNetwork(default_ssid, true, -128, new_status, false);
+void Controller::checkTimeouts() {
+  if (closed_) return;
+  for (Slot *slot : {&station_, &scan_}) {
+    if (!slot->result.id || !slot->started ||
+        roo_time::Uptime::Now() < slot->deadline)
+      continue;
+    if (slot->timed_out || slot->cancelled) {
+      faulted_ = true;
+      reconnect_profile_ = 0;
+      finish(*slot, Error::kTimeout);
     } else {
-      ConnectionStatus new_status = (default_ssid == current_network_.ssid)
-                                        ? current_network_status_
-                                        : WL_DISCONNECTED;
-      updateCurrentNetwork(default_ssid, default_network_in_range->open,
-                           default_network_in_range->rssi, new_status, false);
+      slot->timed_out = true;
+      slot->deadline = roo_time::Uptime::Now() +
+                       roo_time::Millis(options_.transition_timeout_ms);
+      interface_.cancel(slot->result.id);
     }
+  }
+  if (station_.result.id || scan_.result.id)
+    timer_.scheduleAfter(roo_time::Millis(1));
+}
+
+void Controller::finish(Slot &slot, Error error, int32_t native,
+                        bool has_native) {
+  OperationResult result = slot.result;
+  result.error = slot.timed_out ? Error::kTimeout : error;
+  result.native_code = native;
+  result.has_native_code = has_native;
+  slot = {};
+  if (result.kind == OperationKind::kConnect && result.error != Error::kOk)
+    reconnect_profile_ = 0;
+  if (result.kind == OperationKind::kScan)
+    for (Listener *listener : listeners_) listener->onScanStateChanged(false);
+  if (result.kind == OperationKind::kSave ||
+      result.kind == OperationKind::kRemove)
+    for (Listener *listener : listeners_) listener->onProfilesChanged();
+  for (Listener *listener : listeners_) listener->onOperationFinished(result);
+}
+
+void Controller::onOperationFinished(const OperationResult &result) {
+  Slot *slot = find(result.id);
+  if (!slot || closed_ || result.kind != slot->result.kind) return;
+  Error error = result.error;
+  bool startup = false;
+  if (error == Error::kOk && !slot->timed_out && !slot->cancelled) {
+    if (result.kind == OperationKind::kScan) {
+      ScanRead read;
+      error =
+          interface_.readScanResults(records_.data(), records_.size(), read);
+      if (error == Error::kOk && read.count <= records_.size()) {
+        snapshot_ = {snapshot_.generation + 1, records_.data(), read.count,
+                     read.truncated};
+        for (Listener *listener : listeners_) listener->onScanChanged();
+      } else if (error == Error::kOk)
+        error = Error::kCorrupt;
+    } else if (result.kind == OperationKind::kEnable) {
+      error = store_.writeEnabled(enabled_);
+      startup = error == Error::kOk && enabled_;
+    }
+  }
+  finish(*slot, error, result.native_code, result.has_native_code);
+  if (startup && !station_.result.id && !closed_) {
+    reconnect_profile_ = options_.startup_profile;
+    reconnect_.scheduleNow();
   }
 }
 
-void Controller::updateCurrentNetwork(const std::string& ssid, bool open,
-                                      int8_t rssi, ConnectionStatus status,
-                                      bool force_notify) {
-  if (!force_notify && rssi == current_network_.rssi &&
-      ssid == current_network_.ssid && open == current_network_.open &&
-      status == current_network_status_) {
-    return;
-  }
-  current_network_.ssid = ssid;
-  current_network_.open = open;
-  current_network_.rssi = rssi;
-  current_network_status_ = status;
-  current_network_index_ = -1;
-  for (size_t i = 0; i < all_networks_.size(); ++i) {
-    if (all_networks_[i].ssid == ssid) {
-      current_network_index_ = static_cast<int16_t>(i);
-      break;
-    }
-  }
-  for (auto& l : model_listeners_) {
-    l->onCurrentNetworkChanged();
-  };
+void Controller::onEnabledChanged(bool enabled) {
+  if (closed_) return;
+  enabled_ = enabled;
+  for (Listener *listener : listeners_) listener->onEnabledChanged(enabled);
 }
 
-void Controller::onScanCompleted() {
-  current_network_index_ = -1;
-  std::vector<NetworkDetails> raw_data;
-  if (!interface_.getScanResults(&raw_data, 100)) {
-    if (enabled_ && !paused_) {
-      start_scan_.scheduleAfter(roo_time::Seconds(15));
-    }
+void Controller::onLinkChanged(const LinkState &state) {
+  if (closed_ || faulted_) return;
+  if (state.connection_id != link_.connection_id &&
+      state.connection_id != station_.result.id)
     return;
-  }
-  auto notify_scan_completed = [this]() {
-    for (auto& listener : model_listeners_) {
-      listener->onScanCompleted();
-    }
-    if (enabled_ && !paused_) {
-      start_scan_.scheduleAfter(roo_time::Seconds(15));
-    }
-  };
-  size_t raw_count = raw_data.size();
-  if (raw_count == 0) {
-    all_networks_.clear();
-    if (current_network_status_ == WL_DISCONNECTED) {
-      current_network_status_ = WL_NO_SSID_AVAIL;
-    }
-    notify_scan_completed();
-    return;
-  }
-  // De-duplicate SSID, keeping the one with the strongest signal.
-  // Start by sorting by (ssid, signal strength).
-  std::vector<size_t> indices(raw_count, 0);
-  for (size_t i = 0; i < raw_count; ++i) indices[i] = i;
-  std::sort(indices.begin(), indices.end(), [&](size_t a, size_t b) -> bool {
-    int ssid_cmp = strncmp((const char*)raw_data[a].ssid,
-                           (const char*)raw_data[b].ssid, 33);
-    if (ssid_cmp < 0) return true;
-    if (ssid_cmp > 0) return false;
-    return raw_data[a].rssi > raw_data[b].rssi;
-  });
-  // Now, compact the result by keeping the first value for each SSID.
-  const char* current_ssid = (const char*)raw_data[indices[0]].ssid;
-  size_t src = 1;
-  size_t dst = 1;
-  while (src < raw_count) {
-    const char* candidate_ssid = (const char*)raw_data[indices[src]].ssid;
-    if (strncmp(current_ssid, candidate_ssid, 33) != 0) {
-      current_ssid = candidate_ssid;
-      indices[dst++] = indices[src];
-    }
-    ++src;
-  }
-  // Now sort again, this time by signal strength only.
-  // Single-out and remove the default network.
-  std::sort(indices.begin(), indices.begin() + dst,
-            [&](size_t a, size_t b) -> bool {
-              return raw_data[a].rssi > raw_data[b].rssi;
-            });
-  // Finally, copy over the results.
-  all_networks_.resize(dst);
-  bool found = false;
-  for (size_t i = 0; i < dst; ++i) {
-    NetworkDetails& src = raw_data[indices[i]];
-    Network& dst = all_networks_[i];
-    dst.ssid =
-        std::string((const char*)src.ssid, strlen((const char*)src.ssid));
-    dst.open = (src.authmode == WIFI_AUTH_OPEN);
-    dst.rssi = src.rssi;
-    if (dst.ssid == current_network_.ssid) {
-      found = true;
-      current_network_index_ = static_cast<int16_t>(i);
-      if (current_network_status_ == WL_NO_SSID_AVAIL) {
-        current_network_status_ = WL_DISCONNECTED;
-      }
-    }
-  }
-  if (!found && current_network_status_ == WL_DISCONNECTED) {
-    current_network_status_ = WL_NO_SSID_AVAIL;
-  }
-  notify_scan_completed();
+  link_ = state;
+  for (Listener *listener : listeners_) listener->onLinkChanged(state);
+  if (state.phase == LinkPhase::kIdle && reconnect_profile_ &&
+      !station_.result.id)
+    reconnect_.scheduleAfter(roo_time::Seconds(1));
 }
 
+void Controller::startProfile() {
+  if (!reconnect_profile_ || closed_ || !enabled_ || faulted_) return;
+  ProfileId id = reconnect_profile_;
+  Profile profile;
+  Error error = loadProfile(id, profile);
+  if (error == Error::kOk && !profile.settings.auto_connect) {
+    reconnect_profile_ = 0;
+    return;
+  }
+  if (error == Error::kOk) {
+    RequestResult result = connect(id);
+    if (result.id) return;
+    error = result.error;
+    if (error == Error::kBusy) {
+      reconnect_.scheduleAfter(roo_time::Seconds(1));
+      return;
+    }
+  }
+  RequestResult request = admit(station_, OperationKind::kConnect, id);
+  if (request.id) finish(station_, error);
+}
 }  // namespace roo_wifi
