@@ -1,264 +1,425 @@
-#include "esp32_arduino_interface.h"
+#include "roo_wifi/hal/esp32/esp32_arduino_interface.h"
 
 #include <algorithm>
+#include <cstring>
 
 #include "WiFi.h"
-#include "WiFiGeneric.h"
+#include "esp_netif.h"
+#include "esp_system.h"
 
 namespace roo_wifi {
-
 namespace {
-
-AuthMode ToAuthMode(wifi_auth_mode_t mode) {
+roo::mutex owner_mutex;
+Esp32Station *owner = nullptr;
+AuthMode Auth(wifi_auth_mode_t mode) {
   switch (mode) {
-    case ::WIFI_AUTH_OPEN:
-      return WIFI_AUTH_OPEN;
-    case ::WIFI_AUTH_WEP:
-      return WIFI_AUTH_WEP;
-    case ::WIFI_AUTH_WPA_PSK:
-      return WIFI_AUTH_WPA_PSK;
-    case ::WIFI_AUTH_WPA2_PSK:
-      return WIFI_AUTH_WPA2_PSK;
-    case ::WIFI_AUTH_WPA_WPA2_PSK:
-      return WIFI_AUTH_WPA_WPA2_PSK;
-    case ::WIFI_AUTH_WPA2_ENTERPRISE:
-      return WIFI_AUTH_WPA2_ENTERPRISE;
-    case ::WIFI_AUTH_WPA3_PSK:
-      return WIFI_AUTH_WPA3_PSK;
-    case ::WIFI_AUTH_WPA2_WPA3_PSK:
-      return WIFI_AUTH_WPA2_WPA3_PSK;
-    case ::WIFI_AUTH_WAPI_PSK:
-      return WIFI_AUTH_WAPI_PSK;
+    case WIFI_AUTH_OPEN:
+      return AuthMode::kOpen;
+    case WIFI_AUTH_WEP:
+      return AuthMode::kWep;
+    case WIFI_AUTH_WPA_PSK:
+      return AuthMode::kWpaPersonal;
+    case WIFI_AUTH_WPA2_PSK:
+      return AuthMode::kWpa2Personal;
+    case WIFI_AUTH_WPA_WPA2_PSK:
+      return AuthMode::kWpaWpa2Personal;
+    case WIFI_AUTH_WPA2_ENTERPRISE:
+      return AuthMode::kEnterprise;
+    case WIFI_AUTH_WPA3_PSK:
+      return AuthMode::kWpa3Personal;
+    case WIFI_AUTH_WPA2_WPA3_PSK:
+      return AuthMode::kWpa2Wpa3Personal;
+    case WIFI_AUTH_WAPI_PSK:
+      return AuthMode::kWapiPersonal;
     default:
-      return WIFI_AUTH_UNKNOWN;
+      return AuthMode::kUnknown;
   }
 }
 
-roo::mutex interfaces_mutex;
-roo_collections::FlatSmallHashSet<Esp32ArduinoInterface*> interfaces;
-
-void Dispatch(arduino_event_id_t event, arduino_event_info_t info) {
-  roo::lock_guard<roo::mutex> lock(interfaces_mutex);
-  for (Esp32ArduinoInterface* interface : interfaces) {
-    interface->dispatchEvent(event, info);
+CipherType Cipher(wifi_cipher_type_t c) {
+  switch (c) {
+    case WIFI_CIPHER_TYPE_NONE:
+      return CipherType::kNone;
+    case WIFI_CIPHER_TYPE_WEP40:
+      return CipherType::kWep40;
+    case WIFI_CIPHER_TYPE_WEP104:
+      return CipherType::kWep104;
+    case WIFI_CIPHER_TYPE_TKIP:
+      return CipherType::kTkip;
+    case WIFI_CIPHER_TYPE_CCMP:
+      return CipherType::kCcmp;
+    case WIFI_CIPHER_TYPE_TKIP_CCMP:
+      return CipherType::kTkipCcmp;
+    case WIFI_CIPHER_TYPE_AES_CMAC128:
+      return CipherType::kAesCmac128;
+    case WIFI_CIPHER_TYPE_SMS4:
+      return CipherType::kSms4;
+    case WIFI_CIPHER_TYPE_GCMP:
+      return CipherType::kGcmp;
+    case WIFI_CIPHER_TYPE_GCMP256:
+      return CipherType::kGcmp256;
+    default:
+      return CipherType::kUnknown;
   }
 }
-
-void Init() {
-  static struct Init {
-    Init() { WiFi.onEvent(&Dispatch); }
-  } init;
+ScanRecord Record(const wifi_ap_record_t &ap) {
+  ScanRecord r;
+  r.ssid.size = strnlen(reinterpret_cast<const char *>(ap.ssid), 32);
+  memcpy(r.ssid.bytes, ap.ssid, r.ssid.size);
+  memcpy(r.bssid.bytes, ap.bssid, 6);
+  r.security = Auth(ap.authmode);
+  r.pairwise_cipher = Cipher(ap.pairwise_cipher);
+  r.group_cipher = Cipher(ap.group_cipher);
+  r.has_radio_metadata = true;
+  r.use_11b = ap.phy_11b;
+  r.use_11g = ap.phy_11g;
+  r.use_11n = ap.phy_11n;
+  r.supports_wps = ap.wps;
+  r.rssi_dbm = ap.rssi;
+  r.channel = ap.primary;
+  return r;
 }
 
+Ipv4Address Address(const IPAddress &ip) {
+  return {{ip[0], ip[1], ip[2], ip[3]}};
+}
+
+IPAddress Address(const Ipv4Address &ip) {
+  return IPAddress(ip.bytes[0], ip.bytes[1], ip.bytes[2], ip.bytes[3]);
+}
+
+Error Result(esp_err_t code) {
+  return code == ESP_OK ? Error::kOk : Error::kConnectionFailed;
+}
 }  // namespace
-
-Esp32ArduinoInterface::Esp32ArduinoInterface()
-    : listeners_(), listeners_mutex_(), attached_(false) {}
-
-Esp32ArduinoInterface::~Esp32ArduinoInterface() {
-  roo::lock_guard<roo::mutex> lock(interfaces_mutex);
-  if (attached_) {
-    interfaces.erase(this);
-    attached_ = false;
-  }
-}
-
-void Esp32ArduinoInterface::begin() {
-  Init();
+Esp32Station::~Esp32Station() { detach(); }
+Error Esp32Station::attach(Receiver &receiver) {
+  roo::lock_guard<roo::mutex> lock(owner_mutex);
+  if (owner) return Error::kBusy;
+  // Arduino creates the default loop on first mode initialization.
   WiFi.persistent(false);
-  {
-    roo::lock_guard<roo::mutex> lock(interfaces_mutex);
-    if (!attached_) {
-      interfaces.insert(this);
-      attached_ = true;
-    }
+  WiFi.setAutoReconnect(false);
+  esp_err_t error = esp_event_loop_create_default();
+  if (error != ESP_OK && error != ESP_ERR_INVALID_STATE)
+    return Error::kConnectionFailed;
+  receiver_ = &receiver;
+  error = esp_event_handler_instance_register(WIFI_EVENT, ESP_EVENT_ANY_ID,
+                                              &Dispatch, this, &wifi_handler_);
+  if (error == ESP_OK)
+    error = esp_event_handler_instance_register(IP_EVENT, ESP_EVENT_ANY_ID,
+                                                &Dispatch, this, &ip_handler_);
+  if (error != ESP_OK) {
+    if (wifi_handler_)
+      esp_event_handler_instance_unregister(WIFI_EVENT, ESP_EVENT_ANY_ID,
+                                            wifi_handler_);
+    wifi_handler_ = nullptr;
+    receiver_ = nullptr;
+    return Error::kConnectionFailed;
   }
-  // // #ifdef ESP32
-  // WiFi.onEvent(
-  //     [this](arduino_event_id_t event) {
-  //       for (const auto& l : listeners_) {
-  //         l->scanCompleted();
-  //       }
-  //     },
-  //     arduino_EVENT_SCAN_DONE);
-  // // #endif
+  owner = this;
+  return Error::kOk;
 }
 
-bool Esp32ArduinoInterface::getApInfo(NetworkDetails* info) const {
-  const String& ssid = WiFi.SSID();
-  if (ssid.length() == 0) return false;
-  *info = NetworkDetails{};
-  const size_t ssid_length =
-      std::min<size_t>(ssid.length(), sizeof(info->ssid) - 1);
-  memcpy(info->ssid, ssid.c_str(), ssid_length);
-  info->ssid[ssid_length] = 0;
-  info->authmode = WIFI_AUTH_UNKNOWN;
-  info->rssi = WiFi.RSSI();
-  const uint8_t* bssid = WiFi.BSSID();
-  if (bssid != nullptr) {
-    memcpy(info->bssid, bssid, sizeof(info->bssid));
-    const int16_t scan_count = WiFi.scanComplete();
-    for (int i = 0; i < scan_count; ++i) {
-      const uint8_t* scan_bssid = WiFi.BSSID(i);
-      if (scan_bssid != nullptr && ssid == WiFi.SSID(i) &&
-          memcmp(bssid, scan_bssid, sizeof(info->bssid)) == 0) {
-        info->authmode = ToAuthMode(WiFi.encryptionType(i));
+void Esp32Station::detach() {
+  roo::lock_guard<roo::mutex> owner_lock(owner_mutex);
+  if (owner != this) return;
+  if (wifi_handler_)
+    esp_event_handler_instance_unregister(WIFI_EVENT, ESP_EVENT_ANY_ID,
+                                          wifi_handler_);
+  if (ip_handler_)
+    esp_event_handler_instance_unregister(IP_EVENT, ESP_EVENT_ANY_ID,
+                                          ip_handler_);
+  roo::unique_lock<roo::mutex> lock(mutex_);
+  receiver_ = nullptr;
+  wifi_handler_ = ip_handler_ = nullptr;
+  owner = nullptr;
+  selecting_ = scan_active_ = false;
+  secret_ = {};
+  WiFi.setAutoReconnect(false);
+  WiFi.disconnect(true, false);
+}
+
+Support Esp32Station::support() const {
+  Support s;
+  for (AuthMode mode : {AuthMode::kOpen, AuthMode::kWep, AuthMode::kWpaPersonal,
+                        AuthMode::kWpa2Personal, AuthMode::kWpaWpa2Personal,
+                        AuthMode::kWpa3Personal, AuthMode::kWpa2Wpa3Personal})
+    s.authentication_modes |= 1u << static_cast<unsigned>(mode);
+  s.hidden_networks = true;
+  s.static_ipv4 = true;
+  s.randomized_mac = true;
+  s.scan_while_connected = true;
+  return s;
+}
+
+Error Esp32Station::enable(bool enabled) {
+  if ((WiFi.getMode() == WIFI_STA && enabled) ||
+      (WiFi.getMode() == WIFI_OFF && !enabled)) {
+    receiver_->post({enabled ? Event::kEnabled : Event::kDisabled});
+    return Error::kOk;
+  }
+  if (!WiFi.mode(enabled ? WIFI_STA : WIFI_OFF))
+    return Error::kConnectionFailed;
+  if (enabled) {
+    WiFi.setAutoReconnect(false);
+    if (!device_mac_[0] && !device_mac_[1])
+      esp_wifi_get_mac(WIFI_IF_STA, device_mac_);
+  }
+  return Error::kOk;
+}
+
+Error Esp32Station::scan(uint16_t capacity) {
+  roo::unique_lock<roo::mutex> lock(mutex_);
+  if (selecting_ || scan_active_) return Error::kBusy;
+  capacity_ = capacity;
+  records_.reserve(capacity);
+  scan_cancelled_ = false;
+  wifi_scan_config_t scan = {};
+  scan.show_hidden = true;
+  scan_active_ = true;
+  lock.unlock();
+  esp_err_t error = esp_wifi_scan_start(&scan, false);
+  if (error != ESP_OK) {
+    lock.lock();
+    scan_active_ = false;
+  }
+  return Result(error);
+}
+
+Error Esp32Station::stopScan() {
+  roo::unique_lock<roo::mutex> lock(mutex_);
+  scan_cancelled_ = true;
+  lock.unlock();
+  Error error = Result(esp_wifi_scan_stop());
+  return error;
+}
+
+Error Esp32Station::connect(const ConnectionConfig &config,
+                            const Credentials &secret) {
+  roo::unique_lock<roo::mutex> lock(mutex_);
+  if (selecting_ || scan_active_) return Error::kBusy;
+  // IDF's SSID filter is a C string, so reject unrepresentable byte SSIDs.
+  if (memchr(config.ssid.bytes, 0, config.ssid.size))
+    return Error::kUnsupported;
+  config_ = config;
+  secret_ = secret;
+  uint8_t ssid[33] = {};
+  memcpy(ssid, config.ssid.bytes, config.ssid.size);
+  wifi_scan_config_t scan = {};
+  scan.ssid = ssid;
+  scan.show_hidden = true;
+  selecting_ = true;
+  scan_cancelled_ = false;
+  lock.unlock();
+  esp_err_t error = esp_wifi_scan_start(&scan, false);
+  if (error != ESP_OK) {
+    lock.lock();
+    selecting_ = false;
+    secret_ = {};
+  }
+  return Result(error);
+}
+
+Error Esp32Station::continueConnect() {
+  {
+    roo::lock_guard<roo::mutex> lock(mutex_);
+    if (!prepared_) return Error::kNotFound;
+    prepared_ = false;
+  }
+  return startSelected(selected_);
+}
+
+Error Esp32Station::disconnect() {
+  roo::unique_lock<roo::mutex> lock(mutex_);
+  if (prepared_) {
+    prepared_ = false;
+    secret_ = {};
+    return Error::kNotFound;
+  }
+  if (selecting_) {
+    scan_cancelled_ = true;
+    lock.unlock();
+    Error error = Result(esp_wifi_scan_stop());
+    return error;
+  }
+  // The ordered layer synthesizes idle only when it already knows no attempt
+  // exists. ESP_OK during pre-association cancellation is not proof of idle.
+  lock.unlock();
+  return Result(esp_wifi_disconnect());
+}
+
+Error Esp32Station::readScan(ScanRecord *out, size_t capacity,
+                             ScanRead &result) const {
+  roo::unique_lock<roo::mutex> lock(mutex_);
+  size_t count = std::min(capacity, records_.size());
+  std::copy_n(records_.begin(), count, out);
+  result = {count, truncated_ || count < records_.size()};
+  return Error::kOk;
+}
+
+Error Esp32Station::startSelected(const wifi_ap_record_t &ap) {
+  uint8_t mac[6];
+  memcpy(mac, device_mac_, 6);
+  if (config_.mac_policy == MacPolicy::kRandomized) {
+    esp_fill_random(mac, 6);
+    mac[0] = (mac[0] & 0xfe) | 0x02;
+  }
+  if (esp_wifi_set_mac(WIFI_IF_STA, mac) != ESP_OK)
+    return Error::kConnectionFailed;
+  if (config_.ip_mode == IpMode::kDhcp) {
+    if (!WiFi.config(INADDR_NONE, INADDR_NONE, INADDR_NONE))
+      return Error::kConnectionFailed;
+  } else {
+    const StaticIpv4 &s = config_.static_ipv4;
+    uint32_t mask = 0xffffffffu << (32 - s.prefix_length);
+    if (!WiFi.config(Address(s.address), Address(s.gateway),
+                     IPAddress(mask >> 24, (mask >> 16) & 255,
+                               (mask >> 8) & 255, mask & 255),
+                     Address(s.dns1),
+                     s.has_dns2 ? Address(s.dns2) : IPAddress()))
+      return Error::kConnectionFailed;
+  }
+  wifi_config_t config = {};
+  memcpy(config.sta.ssid, config_.ssid.bytes, config_.ssid.size);
+  memcpy(config.sta.password, secret_.bytes, secret_.size);
+  config.sta.bssid_set = true;
+  memcpy(config.sta.bssid, ap.bssid, 6);
+  config.sta.channel = ap.primary;
+  config.sta.threshold.authmode = ap.authmode;
+  config.sta.pmf_cfg.capable = true;
+  config.sta.pmf_cfg.required = config_.security == AuthMode::kWpa3Personal;
+  Error error = Result(esp_wifi_set_config(WIFI_IF_STA, &config));
+  secret_ = {};
+  return error == Error::kOk ? Result(esp_wifi_connect()) : error;
+}
+
+void Esp32Station::Dispatch(void *context, esp_event_base_t base, int32_t id,
+                            void *data) {
+  static_cast<Esp32Station *>(context)->event(base, id, data);
+}
+
+void Esp32Station::event(esp_event_base_t base, int32_t id, void *data) {
+  roo::unique_lock<roo::mutex> lock(mutex_);
+  if (!receiver_) return;
+  Event event{};
+  if (base == WIFI_EVENT) {
+    switch (id) {
+      case WIFI_EVENT_STA_START:
+        event.kind = Event::kEnabled;
+        break;
+      case WIFI_EVENT_STA_STOP:
+        event.kind = Event::kDisabled;
+        break;
+      case WIFI_EVENT_SCAN_DONE: {
+        if (!selecting_ && !scan_active_) return;
+        const wifi_event_sta_scan_done_t &done =
+            *static_cast<wifi_event_sta_scan_done_t *>(data);
+        uint16_t total = 0;
+        esp_wifi_scan_get_ap_num(&total);
+        // Bound both user scans and internal candidate selection.
+        uint16_t count = std::min<uint16_t>(
+            total, selecting_ ? 100 : std::max<uint16_t>(1, capacity_));
+        std::vector<wifi_ap_record_t> aps(std::max<uint16_t>(count, 1));
+        uint16_t fetched = std::max<uint16_t>(count, 1);
+        esp_err_t error = esp_wifi_scan_get_ap_records(&fetched, aps.data());
+        event.error = done.status == 0 && error == ESP_OK
+                          ? Error::kOk
+                          : Error::kConnectionFailed;
+        event.native_code = done.status ? done.status : error;
+        if (selecting_) {
+          selecting_ = false;
+          if (!scan_cancelled_ && event.error == Error::kOk) {
+            for (size_t i = 0; i < fetched; ++i) {
+              if (Auth(aps[i].authmode) != config_.security) continue;
+              selected_ = aps[i];
+              prepared_ = true;
+              receiver_->post({Event::kPrepared});
+              return;
+            }
+          }
+          secret_ = {};
+          event.kind = Event::kDisconnected;
+          event.link.ssid = config_.ssid;
+          event.error = Error::kConnectionFailed;
+        } else {
+          scan_active_ = false;
+          event.kind = Event::kScanDone;
+          if (event.error == Error::kOk && !scan_cancelled_) {
+            records_.clear();
+            for (size_t i = 0; i < std::min<size_t>(fetched, capacity_); ++i)
+              records_.push_back(Record(aps[i]));
+            truncated_ = total > records_.size();
+          }
+        }
+        scan_cancelled_ = false;
         break;
       }
-    }
-  }
-  info->primary = WiFi.channel();
-  info->group_cipher = WIFI_CIPHER_TYPE_UNKNOWN;
-  info->pairwise_cipher = WIFI_CIPHER_TYPE_UNKNOWN;
-  info->use_11b = false;
-  info->use_11g = false;
-  info->use_11n = false;
-  info->supports_wps = false;
-
-  info->status = (ConnectionStatus)WiFi.status();
-  return true;
-}
-
-bool Esp32ArduinoInterface::startScan() {
-  return WiFi.scanNetworks(true, false) == WIFI_SCAN_RUNNING;
-}
-
-bool Esp32ArduinoInterface::scanCompleted() const {
-  bool completed = WiFi.scanComplete() >= 0;
-  return completed;
-}
-
-bool Esp32ArduinoInterface::getScanResults(std::vector<NetworkDetails>* list,
-                                           int max_count) const {
-  int16_t result = WiFi.scanComplete();
-  if (result < 0) return false;
-  if (max_count > result) {
-    max_count = result;
-  }
-  list->clear();
-  for (int i = 0; i < max_count; ++i) {
-    NetworkDetails info = {};
-    auto ssid = WiFi.SSID(i);
-    const size_t ssid_length =
-        std::min<size_t>(ssid.length(), sizeof(info.ssid) - 1);
-    memcpy(info.ssid, ssid.c_str(), ssid_length);
-    info.ssid[ssid_length] = 0;
-    const uint8_t* bssid = WiFi.BSSID(i);
-    if (bssid != nullptr) {
-      memcpy(info.bssid, bssid, sizeof(info.bssid));
-    }
-    info.authmode = ToAuthMode(WiFi.encryptionType(i));
-    info.rssi = WiFi.RSSI(i);
-    info.primary = WiFi.channel(i);
-    info.group_cipher = WIFI_CIPHER_TYPE_UNKNOWN;
-    info.pairwise_cipher = WIFI_CIPHER_TYPE_UNKNOWN;
-    info.use_11b = false;
-    info.use_11g = false;
-    info.use_11n = false;
-    info.supports_wps = false;
-    info.status = WL_SCAN_COMPLETED;
-    list->push_back(std::move(info));
-  }
-  return true;
-}
-
-void Esp32ArduinoInterface::disconnect() { WiFi.disconnect(); }
-
-void Esp32ArduinoInterface::setEnabled(bool enabled) {
-  if (enabled) {
-    WiFi.mode(WIFI_STA);
-  } else {
-    WiFi.disconnect(true, false);
-  }
-}
-
-void Esp32ArduinoInterface::clearPersistentCredentials() {
-  WiFi.mode(WIFI_STA);
-  WiFi.disconnect(true, true);
-}
-
-bool Esp32ArduinoInterface::connect(const std::string& ssid,
-                                    const std::string& passwd) {
-  if (ssid.empty() || ssid.size() > 32 ||
-      ssid.find('\0') != std::string::npos || passwd.size() > 64 ||
-      passwd.find('\0') != std::string::npos) {
-    return false;
-  }
-  // WiFi.begin() returns the station's live status, not whether the request
-  // was accepted. The Arduino event task can publish an authentication failure
-  // before begin() returns, making that status timing-dependent. Validated
-  // requests are accepted here; their result is reported through events.
-  WiFi.begin(ssid.c_str(), passwd.c_str());
-  return true;
-}
-
-ConnectionStatus Esp32ArduinoInterface::getStatus() {
-  return (ConnectionStatus)WiFi.status();
-}
-
-void Esp32ArduinoInterface::addEventListener(EventListener* listener) {
-  roo::lock_guard<roo::mutex> lock(listeners_mutex_);
-  listeners_.insert(listener);
-}
-
-void Esp32ArduinoInterface::removeEventListener(EventListener* listener) {
-  roo::lock_guard<roo::mutex> lock(listeners_mutex_);
-  listeners_.erase(listener);
-}
-
-namespace {
-
-Interface::EventType GetEventType(arduino_event_id_t event,
-                                  const arduino_event_info_t& info) {
-  switch (event) {
-    case ARDUINO_EVENT_WIFI_SCAN_DONE:
-      return Interface::EV_SCAN_COMPLETED;
-    case ARDUINO_EVENT_WIFI_STA_CONNECTED:
-      return Interface::EV_CONNECTED;
-    case ARDUINO_EVENT_WIFI_STA_GOT_IP:
-      return Interface::EV_GOT_IP;
-    case ARDUINO_EVENT_WIFI_STA_DISCONNECTED: {
-      switch (info.wifi_sta_disconnected.reason) {
-        case WIFI_REASON_AUTH_FAIL:
-          return Interface::EV_CONNECTION_FAILED;
-        case WIFI_REASON_BEACON_TIMEOUT:
-        case WIFI_REASON_HANDSHAKE_TIMEOUT:
-          return Interface::EV_CONNECTION_LOST;
-        default:
-          return Interface::EV_DISCONNECTED;
+      case WIFI_EVENT_STA_CONNECTED: {
+        const wifi_event_sta_connected_t &info =
+            *static_cast<wifi_event_sta_connected_t *>(data);
+        if (Auth(info.authmode) != config_.security) {
+          lock.unlock();
+          esp_wifi_disconnect();
+          return;
+        }
+        event.kind = Event::kAssociated;
+        event.link.ssid.size = std::min<uint8_t>(info.ssid_len, 32);
+        memcpy(event.link.ssid.bytes, info.ssid, event.link.ssid.size);
+        memcpy(event.link.bssid.bytes, info.bssid, 6);
+        event.link.security = Auth(info.authmode);
+        event.link.channel = info.channel;
+        wifi_ap_record_t ap = {};
+        if (esp_wifi_sta_get_ap_info(&ap) == ESP_OK) {
+          event.link.rssi_dbm = ap.rssi;
+          event.link.has_radio_info = true;
+        }
+        event.link.has_station_mac =
+            esp_wifi_get_mac(WIFI_IF_STA, event.link.station_mac.bytes) ==
+            ESP_OK;
+        break;
       }
+      case WIFI_EVENT_STA_DISCONNECTED: {
+        const wifi_event_sta_disconnected_t &info =
+            *static_cast<wifi_event_sta_disconnected_t *>(data);
+        event.kind = Event::kDisconnected;
+        event.link.ssid.size = std::min<uint8_t>(info.ssid_len, 32);
+        memcpy(event.link.ssid.bytes, info.ssid, event.link.ssid.size);
+        memcpy(event.link.bssid.bytes, info.bssid, 6);
+        event.native_code = info.reason;
+        event.error = Error::kConnectionFailed;
+        break;
+      }
+      default:
+        return;
     }
-    default:
-      return Interface::EV_UNKNOWN;
-  }
+  } else if (base == IP_EVENT && id == IP_EVENT_STA_GOT_IP) {
+    const ip_event_got_ip_t &info = *static_cast<ip_event_got_ip_t *>(data);
+    if (info.esp_netif != esp_netif_get_handle_from_ifkey("WIFI_STA_DEF"))
+      return;
+    wifi_ap_record_t current_ap = {};
+    esp_netif_ip_info_t current_ip = {};
+    if (esp_wifi_sta_get_ap_info(&current_ap) != ESP_OK ||
+        esp_netif_get_ip_info(info.esp_netif, &current_ip) != ESP_OK ||
+        current_ip.ip.addr != info.ip_info.ip.addr ||
+        memcmp(current_ap.bssid, selected_.bssid, 6) != 0)
+      return;
+    event.link.ssid = Record(current_ap).ssid;
+    memcpy(event.link.bssid.bytes, current_ap.bssid, 6);
+    event.kind = Event::kAddressReady;
+    event.link.address = Address(IPAddress(info.ip_info.ip.addr));
+    event.link.gateway = Address(IPAddress(info.ip_info.gw.addr));
+    event.link.has_ipv4 = true;
+    event.link.dns1 = Address(WiFi.dnsIP(0));
+    event.link.dns2 = Address(WiFi.dnsIP(1));
+    event.link.has_dns1 = uint32_t(WiFi.dnsIP(0)) != 0;
+    event.link.has_dns2 = uint32_t(WiFi.dnsIP(1)) != 0;
+  } else if (base == IP_EVENT && id == IP_EVENT_STA_LOST_IP) {
+    // Loss has no connection identity. Verify current netif state; never clear
+    // a newly acquired address merely because an old loss timer expired.
+    if (uint32_t(WiFi.localIP()) != 0) return;
+    event.kind = Event::kAddressLost;
+  } else
+    return;
+  receiver_->post(event);
 }
-
-roo::string_view GetEventSsid(arduino_event_id_t event,
-                              const arduino_event_info_t& info) {
-  switch (event) {
-    case ARDUINO_EVENT_WIFI_STA_CONNECTED:
-      return roo::string_view(
-          reinterpret_cast<const char*>(info.wifi_sta_connected.ssid),
-          info.wifi_sta_connected.ssid_len);
-    case ARDUINO_EVENT_WIFI_STA_DISCONNECTED:
-      return roo::string_view(
-          reinterpret_cast<const char*>(info.wifi_sta_disconnected.ssid),
-          info.wifi_sta_disconnected.ssid_len);
-    default:
-      return roo::string_view();
-  }
-}
-
-}  // namespace
-
-void Esp32ArduinoInterface::dispatchEvent(arduino_event_id_t event,
-                                          const arduino_event_info_t& info) {
-  EventType type = GetEventType(event, info);
-  roo::string_view ssid = GetEventSsid(event, info);
-  roo::lock_guard<roo::mutex> lock(listeners_mutex_);
-  for (const auto& l : listeners_) {
-    l->onEvent(type, ssid);
-  }
-}
-
 }  // namespace roo_wifi

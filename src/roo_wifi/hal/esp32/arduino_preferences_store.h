@@ -1,56 +1,33 @@
-/// @file
-/// @brief ESP32 preferences-backed Wi-Fi store.
-
 #pragma once
-
 #include "roo_prefs.h"
-#include "roo_wifi/hal/store.h"
-
+#include "roo_wifi/hal/field_store.h"
 namespace roo_wifi {
-
-/// @brief Stores Wi-Fi configuration in ESP32 non-volatile preferences.
-/// @ingroup roo_wifi
-///
-/// Password keys are derived from SSIDs so multiple network profiles can be
-/// stored without exposing SSIDs as preferences keys.
-class ArduinoPreferencesStore : public Store {
+/// Known-key Wi-Fi profiles using small, individually committed preferences.
+class ArduinoPreferencesStore : public FieldStore {
  public:
-  /// @brief Constructs a store bound to the Roo Wi-Fi preference collection.
+  /// Initializes the adapter and its bounded state.
   ArduinoPreferencesStore();
 
-  /// @brief Initializes the preferences store.
-  ///
-  /// Present for a uniform adapter lifecycle; currently performs no work.
-  void begin() {}
+  /// Implements the inherited begin contract.
+  Error begin() override;
 
-  /// @copydoc Store::getIsInterfaceEnabled()
-  bool getIsInterfaceEnabled() override;
+  /// Implements the inherited readEnabled contract.
+  Error readEnabled(bool &) const override;
 
-  /// @copydoc Store::setIsInterfaceEnabled()
-  void setIsInterfaceEnabled(bool enabled) override;
+  /// Implements the inherited writeEnabled contract.
+  Error writeEnabled(bool) override;
+  /// Imports only the supplied legacy SSID into a supplied application key.
+  /// Security/settings are explicit; legacy preferences remain untouched.
+  SaveResult importLegacy(ProfileId, const ProfileSettings &);
+  /// Reads the legacy default SSID without importing it.
+  Error readLegacyDefault(Ssid &) const;
 
-  /// @copydoc Store::getDefaultSSID()
-  std::string getDefaultSSID() override;
-
-  /// @copydoc Store::clearDefaultSSID()
-  void clearDefaultSSID() override;
-
-  /// @copydoc Store::setDefaultSSID()
-  void setDefaultSSID(const std::string& ssid) override;
-
-  /// @copydoc Store::getPassword()
-  bool getPassword(const std::string& ssid, std::string& password) override;
-
-  /// @copydoc Store::setPassword()
-  void setPassword(const std::string& ssid, roo::string_view password) override;
-
-  /// @copydoc Store::clearPassword()
-  void clearPassword(const std::string& ssid) override;
+ protected:
+  Error readField(const char *, uint8_t *, size_t &) const override;
+  Error writeField(const char *, const uint8_t *, size_t) override;
+  Error eraseField(const char *) override;
 
  private:
-  roo_prefs::Collection collection_;
-  roo_prefs::Bool is_interface_enabled_;
-  roo_prefs::String default_ssid_;
+  mutable roo_prefs::Collection collection_;
 };
-
 }  // namespace roo_wifi
