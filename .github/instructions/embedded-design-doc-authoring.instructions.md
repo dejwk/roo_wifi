@@ -1,15 +1,15 @@
 ---
-name: "Embedded Design Doc Authoring"
-description: "Use when writing or updating design docs, implementation plans, rendering docs, or API proposals in this repository. Shared baseline across roo libraries."
-applyTo:
-  - "docs/**/*.md"
-  - "doc/**/*.md"
+name: "roo_wifi Design Doc Authoring"
+description: "Use when writing or updating design docs, implementation plans, architecture docs, or API proposals in this repository. Repository-wide roo_wifi design guidance adapted from roo_windows."
+applyTo: "**"
 ---
-# Embedded Design Doc Authoring
+# roo_wifi Design Doc Authoring
 
-Use this instruction for shared design-doc expectations across roo
-repositories. Repo-local skills should add project-specific references,
-validation, and constraints on top of this baseline.
+These are repository-wide instructions for authoring designs, API proposals,
+and implementation plans in `roo_wifi`, wherever those documents live. Copied
+from the `roo_windows` embedded design-authoring baseline, with UI/rendering
+requirements removed. Apply the structure, clarity, resource analysis, and
+validation rules below to backend and platform designs.
 
 ## Audience and Purpose
 
@@ -140,21 +140,6 @@ Use this section order unless a narrower document genuinely needs less:
 - LaTeX math is acceptable for formulas when it makes geometric, rendering,
   or cost analysis clearer. Use inline math for short expressions and display
   math for longer derivations.
-- When Design Overview or Design Details discuss geometry, layout, clipping,
-  paint order, rasterization, or other rendering-related issues, include an
-  illustration unless the point is genuinely obvious without one. Prefer
-  hand-authored SVG over vectorized graphics when the important thing to
-  communicate is geometry, layout, render ordering, clip regions, or formula-
-  derived coordinates. Use a white background and a sans font. Make geometry
-  precise: derive coordinates from the formulas in the design, or simulate the
-  algorithm used by the design doc to calculate them. Write a small helper
-  script when that prevents hand-calculation drift. Check the SVG viewBox and
-  bounds so labels, strokes, and content are not clipped.
-- When the important thing to communicate is raster output or pixel color,
-  prefer PNG. Use PNG for expected raster output of drawing algorithms,
-  antialiasing behavior, per-pixel coverage, or any case where exact pixel
-  colors matter more than geometric construction, and include one when that
-  output is part of the design argument.
 - When Proposed API introduces entry points that will land before full support
   is implemented, specify the interim behavior explicitly: if the API can
   return an error, prefer returning an error; otherwise emit
@@ -240,13 +225,6 @@ Rules:
 - Future Work, when present, appears after Caveats and contains only
   intentionally out-of-scope improvements.
 - LaTeX formulas are used when they clarify the design.
-- Geometry-driven illustrations, when present, prefer hand-authored SVG over
-  vectorized graphics and use a white background, sans-font labels, exact or
-  algorithm-derived coordinates, and no clipped content.
-- Geometry- or rendering-related discussions include illustrations unless the
-  point is genuinely obvious without one.
-- Pixel-output illustrations, when present, prefer PNG when exact raster color
-  or antialiasing behavior is the point of the figure.
 - Partially implemented new APIs prefer returning an error when the API
   supports it; otherwise they define temporary `LOG(WARNING)` plus degenerate
   fallback behavior, or `LOG(FATAL)` when no safe fallback exists.
