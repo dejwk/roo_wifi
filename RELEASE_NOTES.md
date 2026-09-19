@@ -1,3 +1,11 @@
+# roo_wifi 1.1.6
+
+- Updated Roo dependencies in Bazel and PlatformIO: `roo_collections` 1.4.7, `roo_prefs` 1.3.2, `roo_backport` 1.2.4, and `roo_scheduler` 2.2.0.
+- Updated build and test dependencies: `rules_cc` 0.2.25, `googletest` 1.18.0.bcr.1, and `roo_testing` 2.1.2, including the shared CI workflow.
+- Added consolidated release history in `RELEASE_NOTES.md`.
+
+---
+
 # [roo_wifi 1.1.5](https://github.com/dejwk/roo_wifi/releases/tag/1.1.5)
 
 Published 2026-08-30.

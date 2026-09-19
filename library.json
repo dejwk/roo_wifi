@@ -15,7 +15,7 @@
         "type": "git",
         "url": "https://github.com/dejwk/roo_wifi"
     },
-    "version": "1.1.5",
+    "version": "1.1.6",
     "homepage": "https://github.com/dejwk/roo_wifi",
     "frameworks": [
         "Arduino"
@@ -28,9 +28,9 @@
         "srcFilter": "+<*> -<examples> -<benchmarks> -<doc> -<test>"
     },
     "dependencies": {
-        "dejwk/roo_collections": ">=1.4.6",
-        "dejwk/roo_prefs": ">=1.3.1",
-        "dejwk/roo_backport": ">=1.2.3",
-        "dejwk/roo_scheduler": ">=2.1.10"
+        "dejwk/roo_collections": ">=1.4.7",
+        "dejwk/roo_prefs": ">=1.3.2",
+        "dejwk/roo_backport": ">=1.2.4",
+        "dejwk/roo_scheduler": ">=2.2.0"
     }
 }
