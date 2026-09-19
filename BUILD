@@ -25,3 +25,20 @@ cc_test(
     copts = ["-fno-exceptions", "-fno-rtti"],
     deps = [":roo_wifi"],
 )
+
+[
+    test_suite(name = name, tests = ["//test:" + name])
+    for name in [
+        "configuration_store_test",
+        "configuration_controller_test",
+        "interface_lifecycle_test",
+        "backend_resource_test",
+    ]
+]
+
+test_suite(name = "configuration_interface_test", tests = ["//test:esp32_backend_test"])
+
+test_suite(
+    name = "interface_conformance_test",
+    tests = ["//test:controller_test", "//test:esp32_backend_test"],
+)

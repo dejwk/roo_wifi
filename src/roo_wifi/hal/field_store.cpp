@@ -7,8 +7,8 @@ namespace roo_wifi {
 namespace {
 constexpr uint8_t kIncomplete = 0x10, kReady = 0x11, kDeleted = 0x12;
 constexpr const char *kFields[] = {
-    "ssid", "auth",   "hidden",  "ip",  "addr", "gw",       "dns1",
-    "dns2", "prefix", "dns2set", "mac", "auto", "encoding", "secret"};
+    "ssid", "auth",   "hidden",  "ip",  "addr", "gw",  "dns1",
+    "dns2", "prefix", "dns2set", "mac", "auto", "enc", "secret"};
 void Key(ProfileId id, const char *field, char (&out)[16]) {
   snprintf(out, sizeof(out), "%08lx%s", static_cast<unsigned long>(id), field);
 }
