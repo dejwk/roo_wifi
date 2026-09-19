@@ -142,9 +142,16 @@ void Esp32Station::detach() {
 Support Esp32Station::support() const {
   Support s;
   for (AuthMode mode : {AuthMode::kOpen, AuthMode::kWep, AuthMode::kWpaPersonal,
-                        AuthMode::kWpa2Personal, AuthMode::kWpaWpa2Personal,
-                        AuthMode::kWpa3Personal, AuthMode::kWpa2Wpa3Personal})
+                        AuthMode::kWpa2Personal, AuthMode::kWpaWpa2Personal})
     s.authentication_modes |= 1u << static_cast<unsigned>(mode);
+#if (defined(CONFIG_ESP_WIFI_ENABLE_WPA3_SAE) &&   \
+     CONFIG_ESP_WIFI_ENABLE_WPA3_SAE) ||           \
+    (defined(CONFIG_ESP32_WIFI_ENABLE_WPA3_SAE) && \
+     CONFIG_ESP32_WIFI_ENABLE_WPA3_SAE)
+  s.authentication_modes |=
+      (1u << static_cast<unsigned>(AuthMode::kWpa3Personal)) |
+      (1u << static_cast<unsigned>(AuthMode::kWpa2Wpa3Personal));
+#endif
   s.hidden_networks = true;
   s.static_ipv4 = true;
   s.randomized_mac = true;
@@ -266,17 +273,32 @@ Error Esp32Station::startSelected(const wifi_ap_record_t &ap) {
   }
   if (esp_wifi_set_mac(WIFI_IF_STA, mac) != ESP_OK)
     return Error::kConnectionFailed;
+  esp_netif_t *netif = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
+  if (!netif) return Error::kConnectionFailed;
+  esp_err_t status = esp_netif_dhcpc_stop(netif);
+  if (status != ESP_OK && status != ESP_ERR_ESP_NETIF_DHCP_ALREADY_STOPPED)
+    return Error::kConnectionFailed;
+  esp_netif_ip_info_t ip = {};
+  esp_netif_dns_info_t dns1 = {}, dns2 = {};
+  dns1.ip.type = dns2.ip.type = ESP_IPADDR_TYPE_V4;
+  if (config_.ip_mode == IpMode::kStaticIpv4) {
+    const StaticIpv4 &settings = config_.static_ipv4;
+    uint32_t mask = 0xffffffffu << (32 - settings.prefix_length);
+    ip.ip.addr = uint32_t(Address(settings.address));
+    ip.gw.addr = uint32_t(Address(settings.gateway));
+    ip.netmask.addr = uint32_t(IPAddress(mask >> 24, (mask >> 16) & 255,
+                                         (mask >> 8) & 255, mask & 255));
+    dns1.ip.u_addr.ip4.addr = uint32_t(Address(settings.dns1));
+    if (settings.has_dns2)
+      dns2.ip.u_addr.ip4.addr = uint32_t(Address(settings.dns2));
+  }
+  if (esp_netif_set_ip_info(netif, &ip) != ESP_OK ||
+      esp_netif_set_dns_info(netif, ESP_NETIF_DNS_MAIN, &dns1) != ESP_OK ||
+      esp_netif_set_dns_info(netif, ESP_NETIF_DNS_BACKUP, &dns2) != ESP_OK)
+    return Error::kConnectionFailed;
   if (config_.ip_mode == IpMode::kDhcp) {
-    if (!WiFi.config(INADDR_NONE, INADDR_NONE, INADDR_NONE))
-      return Error::kConnectionFailed;
-  } else {
-    const StaticIpv4 &s = config_.static_ipv4;
-    uint32_t mask = 0xffffffffu << (32 - s.prefix_length);
-    if (!WiFi.config(Address(s.address), Address(s.gateway),
-                     IPAddress(mask >> 24, (mask >> 16) & 255,
-                               (mask >> 8) & 255, mask & 255),
-                     Address(s.dns1),
-                     s.has_dns2 ? Address(s.dns2) : IPAddress()))
+    status = esp_netif_dhcpc_start(netif);
+    if (status != ESP_OK && status != ESP_ERR_ESP_NETIF_DHCP_ALREADY_STARTED)
       return Error::kConnectionFailed;
   }
   wifi_config_t config = {};
@@ -400,6 +422,7 @@ void Esp32Station::event(esp_event_base_t base, int32_t id, void *data) {
     esp_netif_ip_info_t current_ip = {};
     if (esp_wifi_sta_get_ap_info(&current_ap) != ESP_OK ||
         esp_netif_get_ip_info(info.esp_netif, &current_ip) != ESP_OK ||
+        current_ip.ip.addr == 0 || current_ip.ip.addr == 0xffffffffu ||
         current_ip.ip.addr != info.ip_info.ip.addr ||
         memcmp(current_ap.bssid, selected_.bssid, 6) != 0)
       return;

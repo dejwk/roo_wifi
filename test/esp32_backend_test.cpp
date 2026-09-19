@@ -1,5 +1,6 @@
 #include "WiFi.h"
 #include "backend_fakes.h"
+#include "esp_netif.h"
 #include "gtest/gtest.h"
 #include "roo_testing/microcontrollers/esp32/fake_esp32.h"
 #include "roo_testing/transducers/wifi/wifi.h"
@@ -40,6 +41,14 @@ TEST(Esp32BackendTest, SecuritySelectionAndSwitch) {
   ASSERT_TRUE(controller.isEnabled());
   ConnectionConfig config = TestConfig("same");
   config.security = AuthMode::kWpa2Personal;
+  config.hidden = true;
+  config.mac_policy = MacPolicy::kRandomized;
+  config.ip_mode = IpMode::kStaticIpv4;
+  config.static_ipv4.address = {{192, 168, 7, 12}};
+  config.static_ipv4.gateway = {{192, 168, 7, 1}};
+  config.static_ipv4.dns1 = {{1, 1, 1, 1}};
+  uint8_t original_mac[6];
+  ASSERT_EQ(esp_wifi_get_mac(WIFI_IF_STA, original_mac), ESP_OK);
   Credentials secret;
   secret.size = 8;
   memcpy(secret.bytes, "password", 8);
@@ -51,10 +60,36 @@ TEST(Esp32BackendTest, SecuritySelectionAndSwitch) {
   EXPECT_EQ(observer.results.back().error, Error::kOk);
   EXPECT_EQ(controller.linkState().phase, LinkPhase::kAddressReady);
   EXPECT_EQ(controller.linkState().bssid.bytes[5], 2);
+  EXPECT_EQ(controller.linkState().address.bytes[2], 7);
+  EXPECT_EQ(controller.linkState().station_mac.bytes[0] & 3, 2);
   config.security = AuthMode::kOpen;
+  config.ip_mode = IpMode::kDhcp;
+  config.mac_policy = MacPolicy::kDevice;
   RequestResult open_request = controller.connect(config, {});
   ASSERT_NE(open_request.id, 0u);
   RunBackend(scheduler);
+  // The shim does not implement a DHCP server. Verify cleared static settings,
+  // then deliver an explicit lease event through the real native event source.
+  esp_netif_t* netif = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
+  esp_netif_ip_info_t cleared = {};
+  ASSERT_EQ(esp_netif_get_ip_info(netif, &cleared), ESP_OK);
+  EXPECT_EQ(cleared.ip.addr, 0u);
+  esp_netif_dhcp_status_t dhcp;
+  ASSERT_EQ(esp_netif_dhcpc_get_status(netif, &dhcp), ESP_OK);
+  EXPECT_EQ(dhcp, ESP_NETIF_DHCP_STARTED);
+  EXPECT_EQ(controller.linkState().phase, LinkPhase::kAssociated);
+  ip_event_got_ip_t lease = {};
+  lease.esp_netif = netif;
+  lease.ip_info.ip.addr = uint32_t(IPAddress(192, 168, 1, 100));
+  lease.ip_info.gw.addr = uint32_t(IPAddress(192, 168, 1, 1));
+  lease.ip_info.netmask.addr = uint32_t(IPAddress(255, 255, 255, 0));
+  ASSERT_EQ(esp_netif_set_ip_info(netif, &lease.ip_info), ESP_OK);
+  ASSERT_EQ(esp_event_post(IP_EVENT, IP_EVENT_STA_GOT_IP, &lease, sizeof(lease),
+                           portMAX_DELAY),
+            ESP_OK);
+  Pump(scheduler);
+  EXPECT_EQ(memcmp(controller.linkState().station_mac.bytes, original_mac, 6),
+            0);
   EXPECT_EQ(observer.results.back().id, open_request.id);
   EXPECT_EQ(observer.results.back().error, Error::kOk);
   EXPECT_EQ(controller.linkState().bssid.bytes[5], 1);
