@@ -115,7 +115,7 @@ class TestStation : public NativeStation {
   }
 
   void emit(Event event) {
-    if (receiver_) receiver_->post(event);
+    if (receiver_ != nullptr) receiver_->post(event);
   }
 
   void associated() {

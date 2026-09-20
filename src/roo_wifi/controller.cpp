@@ -9,8 +9,7 @@ Controller::Controller(Interface &interface, Store &store,
     : Controller(interface, store, scheduler, Options{}) {}
 
 Controller::Controller(Interface &interface, Store &store,
-                       roo_scheduler::Scheduler &scheduler,
-                       Options options)
+                       roo_scheduler::Scheduler &scheduler, Options options)
     : interface_(interface),
       store_(store),
       scheduler_(scheduler),
@@ -131,8 +130,8 @@ Controller::RequestResult Controller::scan() {
   return admit(scan_, OperationKind::kScan);
 }
 
-Controller::RequestResult Controller::connect(
-    const ConnectionConfig &config, const Credentials &credential) {
+Controller::RequestResult Controller::connect(const ConnectionConfig &config,
+                                              const Credentials &credential) {
   Status status = radioAdmission();
   if (status != Status::kOk) return {0, status};
   if (!enabled_) return {0, Status::kDisabled};
@@ -244,7 +243,8 @@ void Controller::execute() {
     Status status = Status::kOk;
     switch (slot->result.kind) {
       case OperationKind::kSave:
-        status = store_.saveProfile(slot->result.profile_id, settings_, update_);
+        status =
+            store_.saveProfile(slot->result.profile_id, settings_, update_);
         update_ = {};
         break;
       case OperationKind::kRemove:
@@ -347,8 +347,7 @@ void Controller::onOperationFinished(const OperationResult &result) {
     }
   }
   finish(*slot, status, result.native_code, result.has_native_code);
-  if (startup && station_.result.id == 0 &&
-      lifecycle_ != Lifecycle::kClosed) {
+  if (startup && station_.result.id == 0 && lifecycle_ != Lifecycle::kClosed) {
     reconnect_profile_ = options_.startup_profile;
     reconnect_.scheduleNow();
   }
@@ -375,8 +374,8 @@ void Controller::onLinkChanged(const LinkState &state) {
 }
 
 void Controller::startProfile() {
-  if (reconnect_profile_ == 0 || lifecycle_ == Lifecycle::kClosed || !enabled_ ||
-      faulted_)
+  if (reconnect_profile_ == 0 || lifecycle_ == Lifecycle::kClosed ||
+      !enabled_ || faulted_)
     return;
   ProfileId id = reconnect_profile_;
   Profile profile;

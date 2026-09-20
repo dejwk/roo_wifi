@@ -57,8 +57,8 @@ Status Validate(const ConnectionConfig &c, const Credentials &secret) {
     // when present it must be a distinct usable host in the same subnet. DNS
     // addresses need only be unicast; the secondary address is optional.
     if (!IsUnicast(ip) || (ip & ~mask) == 0 || (ip & ~mask) == ~mask ||
-        (gw && (!IsUnicast(gw) || (gw & mask) != (ip & mask) ||
-                (gw & ~mask) == 0 || (gw & ~mask) == ~mask || gw == ip)) ||
+        (gw != 0 && (!IsUnicast(gw) || (gw & mask) != (ip & mask) ||
+                     (gw & ~mask) == 0 || (gw & ~mask) == ~mask || gw == ip)) ||
         !IsUnicast(Address(s.dns1)) ||
         (s.has_dns2 && !IsUnicast(Address(s.dns2)))) {
       return Status::kInvalidArgument;
@@ -119,7 +119,8 @@ Status ValidateSupport(const ConnectionConfig &c, const Support &s) {
   // features are checked independently so adapters never silently ignore a
   // requested hidden-network, static-address, or randomized-MAC policy.
   if (static_cast<unsigned>(c.security) >= 32 ||
-      !(s.authentication_modes & (1u << static_cast<unsigned>(c.security))) ||
+      (s.authentication_modes & (1u << static_cast<unsigned>(c.security))) ==
+          0 ||
       (c.hidden && !s.hidden_networks) ||
       (c.ip_mode == IpMode::kStaticIpv4 && !s.static_ipv4) ||
       (c.mac_policy == MacPolicy::kRandomized && !s.randomized_mac)) {

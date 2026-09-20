@@ -18,7 +18,7 @@ struct alignas(std::max_align_t) Allocation {
 void* operator new(size_t size) {
   Allocation* p =
       static_cast<Allocation*>(std::malloc(sizeof(Allocation) + size));
-  if (!p) std::abort();
+  if (p == nullptr) std::abort();
   p->size = size;
   size_t now = live.fetch_add(size) + size;
   size_t old = peak.load();
@@ -29,7 +29,7 @@ void* operator new(size_t size) {
 }
 
 void operator delete(void* data) noexcept {
-  if (!data) return;
+  if (data == nullptr) return;
   Allocation* p = static_cast<Allocation*>(data) - 1;
   live -= p->size;
   std::free(p);

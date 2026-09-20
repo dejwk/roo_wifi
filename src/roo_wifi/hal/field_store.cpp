@@ -97,7 +97,7 @@ Status Decode(size_t f, const uint8_t *data, size_t n, ProfileSettings &s,
       p.security = static_cast<AuthMode>(v);
       break;
     case 2:
-      p.hidden = v;
+      p.hidden = v != 0;
       break;
     case 3:
       p.ip_mode = static_cast<IpMode>(v);
@@ -106,13 +106,13 @@ Status Decode(size_t f, const uint8_t *data, size_t n, ProfileSettings &s,
       p.static_ipv4.prefix_length = v;
       break;
     case 9:
-      p.static_ipv4.has_dns2 = v;
+      p.static_ipv4.has_dns2 = v != 0;
       break;
     case 10:
       p.mac_policy = static_cast<MacPolicy>(v);
       break;
     case 11:
-      s.auto_connect = v;
+      s.auto_connect = v != 0;
       break;
     case 12:
       c.encoding = static_cast<CredentialEncoding>(v);

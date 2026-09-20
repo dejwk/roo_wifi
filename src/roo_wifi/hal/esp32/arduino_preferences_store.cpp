@@ -89,10 +89,11 @@ Status ArduinoPreferencesStore::eraseField(const char *key) {
              : Status::kStorageFailure;
 }
 
-Status ArduinoPreferencesStore::importLegacy(
-    ProfileId id, const ProfileSettings &settings) {
+Status ArduinoPreferencesStore::importLegacy(ProfileId id,
+                                             const ProfileSettings &settings) {
   const Ssid &ssid = settings.connection.ssid;
-  if (!ssid.size || ssid.size > 32 || memchr(ssid.bytes, 0, ssid.size))
+  if (ssid.size == 0 || ssid.size > 32 ||
+      memchr(ssid.bytes, 0, ssid.size) != nullptr)
     return Status::kInvalidArgument;
   CredentialUpdate update;
   update.intent = CredentialIntent::kClear;

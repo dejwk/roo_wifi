@@ -73,10 +73,10 @@ ScanRecord Record(const wifi_ap_record_t &ap) {
   r.pairwise_cipher = Cipher(ap.pairwise_cipher);
   r.group_cipher = Cipher(ap.group_cipher);
   r.has_radio_metadata = true;
-  r.use_11b = ap.phy_11b;
-  r.use_11g = ap.phy_11g;
-  r.use_11n = ap.phy_11n;
-  r.supports_wps = ap.wps;
+  r.use_11b = ap.phy_11b != 0;
+  r.use_11g = ap.phy_11g != 0;
+  r.use_11n = ap.phy_11n != 0;
+  r.supports_wps = ap.wps != 0;
   r.rssi_dbm = ap.rssi;
   r.channel = ap.primary;
   return r;
@@ -99,7 +99,7 @@ Esp32Station::~Esp32Station() { detach(); }
 
 Status Esp32Station::attach(Receiver &receiver) {
   roo::lock_guard<roo::mutex> lock(owner_mutex);
-  if (owner) return Status::kBusy;
+  if (owner != nullptr) return Status::kBusy;
   // Arduino creates the default loop on first mode initialization.
   WiFi.persistent(false);
   WiFi.setAutoReconnect(false);
@@ -114,7 +114,7 @@ Status Esp32Station::attach(Receiver &receiver) {
                                                 &Dispatch, this, &ip_handler_);
   }
   if (error != ESP_OK) {
-    if (wifi_handler_) {
+    if (wifi_handler_ != nullptr) {
       esp_event_handler_instance_unregister(WIFI_EVENT, ESP_EVENT_ANY_ID,
                                             wifi_handler_);
     }
@@ -129,11 +129,11 @@ Status Esp32Station::attach(Receiver &receiver) {
 void Esp32Station::detach() {
   roo::lock_guard<roo::mutex> owner_lock(owner_mutex);
   if (owner != this) return;
-  if (wifi_handler_) {
+  if (wifi_handler_ != nullptr) {
     esp_event_handler_instance_unregister(WIFI_EVENT, ESP_EVENT_ANY_ID,
                                           wifi_handler_);
   }
-  if (ip_handler_) {
+  if (ip_handler_ != nullptr) {
     esp_event_handler_instance_unregister(IP_EVENT, ESP_EVENT_ANY_ID,
                                           ip_handler_);
   }
@@ -178,7 +178,7 @@ Status Esp32Station::enable(bool enabled) {
     return Status::kConnectionFailed;
   if (enabled) {
     WiFi.setAutoReconnect(false);
-    if (!device_mac_[0] && !device_mac_[1])
+    if (device_mac_[0] == 0 && device_mac_[1] == 0)
       esp_wifi_get_mac(WIFI_IF_STA, device_mac_);
   }
   return Status::kOk;
@@ -215,7 +215,7 @@ Status Esp32Station::connect(const ConnectionConfig &config,
   roo::unique_lock<roo::mutex> lock(mutex_);
   if (selecting_ || scan_active_) return Status::kBusy;
   // IDF's SSID filter is a C string, so reject unrepresentable byte SSIDs.
-  if (memchr(config.ssid.bytes, 0, config.ssid.size))
+  if (memchr(config.ssid.bytes, 0, config.ssid.size) != nullptr)
     return Status::kUnsupported;
   config_ = config;
   secret_ = secret;
@@ -283,7 +283,7 @@ Status Esp32Station::startSelected(const wifi_ap_record_t &ap) {
   if (esp_wifi_set_mac(WIFI_IF_STA, mac) != ESP_OK)
     return Status::kConnectionFailed;
   esp_netif_t *netif = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
-  if (!netif) return Status::kConnectionFailed;
+  if (netif == nullptr) return Status::kConnectionFailed;
   esp_err_t status = esp_netif_dhcpc_stop(netif);
   if (status != ESP_OK && status != ESP_ERR_ESP_NETIF_DHCP_ALREADY_STOPPED)
     return Status::kConnectionFailed;
@@ -333,7 +333,7 @@ void Esp32Station::Dispatch(void *context, esp_event_base_t base, int32_t id,
 
 void Esp32Station::event(esp_event_base_t base, int32_t id, void *data) {
   roo::unique_lock<roo::mutex> lock(mutex_);
-  if (!receiver_) return;
+  if (receiver_ == nullptr) return;
   Event event{};
   if (base == WIFI_EVENT) {
     switch (id) {
@@ -358,7 +358,7 @@ void Esp32Station::event(esp_event_base_t base, int32_t id, void *data) {
         event.error = done.status == 0 && error == ESP_OK
                           ? Status::kOk
                           : Status::kConnectionFailed;
-        event.native_code = done.status ? done.status : error;
+        event.native_code = done.status != 0 ? done.status : error;
         if (selecting_) {
           selecting_ = false;
           if (!scan_cancelled_ && event.error == Status::kOk) {
