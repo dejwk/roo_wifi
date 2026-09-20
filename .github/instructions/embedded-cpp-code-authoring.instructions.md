@@ -56,6 +56,9 @@ policy on top of this baseline.
 - Avoid `auto` unless the type is obvious from the initializer context, such
   as `std::make_unique<...>()`, or the spelled-out type would be excessively
   complex.
+- Do not depend on implicit conversions from integers, enums, or pointers to
+  `bool`. Compare integers with zero, scoped enums with named enumerators, and
+  pointers with `nullptr`; use direct conditions only for actual `bool` values.
 - Be conservative about RAM. Flash is usually cheaper than per-instance state,
   so prefer shared data, existing ownership points, and zero-cost hooks when
   possible.
@@ -128,6 +131,7 @@ policy on top of this baseline.
 - Complex algorithms explain their main strategy and important branches.
 - Non-trivial helper functions and methods are documented.
 - The change does not add avoidable per-instance RAM cost.
+- Boolean conditions do not implicitly convert integers, enums, or pointers.
 - If the change implements a design-doc stage, the response includes a
   proposed commit message with a standalone summary sentence followed by a
   descriptive paragraph, references the design doc, and reflects any
