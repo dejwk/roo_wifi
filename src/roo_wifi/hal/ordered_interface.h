@@ -16,6 +16,7 @@ class NativeStation {
 
   /// Carries a copied native station event to the ordered adapter.
   struct Event {
+    /// Identifies the native lifecycle event represented by this payload.
     enum Kind {
       kEnabled,
       kDisabled,
@@ -25,10 +26,18 @@ class NativeStation {
       kDisconnected,
       kScanDone,
       kPrepared
-    } kind;
+    };
 
+    /// Native lifecycle event kind.
+    Kind kind;
+
+    /// Link-state data carried by the event.
     LinkState link;
+
+    /// Portable outcome carried by the event.
     Status error = Status::kOk;
+
+    /// Optional native platform diagnostic.
     int32_t native_code = 0;
   };
 
@@ -144,12 +153,25 @@ class OrderedInterface : public Interface, private NativeStation::Receiver {
   void shutdown() override;
 
  private:
+  /// Enqueues a native event for scheduler-context processing.
   void post(const NativeStation::Event &) override;
+
+  /// Drains the bounded native-event queue in posting order.
   void drain();
+
+  /// Applies one native event to the portable state machine.
   void process(const NativeStation::Event &);
+
+  /// Starts a prepared connection after any old link has disconnected.
   void startConnection();
+
+  /// Settles the active station operation.
   void finishStation(Status, int32_t = 0);
+
+  /// Settles the active scan operation.
   void finishScan(Status, int32_t = 0);
+
+  /// Reports whether the station slot can admit the requested operation ID.
   Status stationAdmission(OperationId) const;
   NativeStation &native_;
   Sink *sink_ = nullptr;

@@ -9,6 +9,7 @@
 #include "roo_wifi/hal/ordered_interface.h"
 
 namespace roo_wifi {
+/// Creates a portable open-network configuration for tests.
 inline ConnectionConfig TestConfig(const char *name = "network") {
   ConnectionConfig config;
   config.ssid.size = strlen(name);
@@ -17,21 +18,26 @@ inline ConnectionConfig TestConfig(const char *name = "network") {
   return config;
 }
 
+/// Provides deterministic in-memory field persistence for controller tests.
 class MemoryStore : public FieldStore {
  public:
+  /// Opens the always-available in-memory store.
   Status begin() override { return Status::kOk; }
 
+  /// Returns the configured persisted enablement value.
   Status readEnabled(bool &out) const override {
     out = enabled;
     return Status::kOk;
   }
 
+  /// Stores enablement unless the configured failure is active.
   Status writeEnabled(bool value) override {
     if (enabled_error != Status::kOk) return enabled_error;
     enabled = value;
     return Status::kOk;
   }
 
+  /// Copies a named field from the in-memory map.
   Status readField(const char *key, uint8_t *out, size_t &size) const override {
     auto it = values.find(key);
     if (it == values.end()) return Status::kNotFound;
@@ -41,6 +47,7 @@ class MemoryStore : public FieldStore {
     return Status::kOk;
   }
 
+  /// Copies a named field into the in-memory map.
   Status writeField(const char *key, const uint8_t *data,
                     size_t size) override {
     if (++writes == fail_at) return Status::kStorageFailure;
@@ -49,6 +56,7 @@ class MemoryStore : public FieldStore {
     return Status::kOk;
   }
 
+  /// Removes a named field from the in-memory map.
   Status eraseField(const char *key) override {
     if (++writes == fail_at) return Status::kStorageFailure;
     values.erase(key);
@@ -62,34 +70,42 @@ class MemoryStore : public FieldStore {
   Status enabled_error = Status::kOk;
 };
 
+/// Provides a manually driven native station for ordered-interface tests.
 class TestStation : public NativeStation {
  public:
+  /// Attaches the receiver that accepts manually emitted events.
   Status attach(Receiver &receiver) override {
     receiver_ = &receiver;
     return Status::kOk;
   }
 
+  /// Detaches the current event receiver.
   void detach() override { receiver_ = nullptr; }
 
+  /// Reports support for every portable feature used by the tests.
   Support support() const override {
     return {0xffffffffu, true, true, true, true};
   }
 
+  /// Emits the requested physical enablement state.
   Status enable(bool enabled) override {
     emit({enabled ? Event::kEnabled : Event::kDisabled});
     return Status::kOk;
   }
 
+  /// Records admission of a native scan.
   Status scan(uint16_t) override {
     ++scans;
     return Status::kOk;
   }
 
+  /// Records cancellation of a native scan.
   Status stopScan() override {
     ++scan_stops;
     return Status::kOk;
   }
 
+  /// Records connection inputs and returns the configured outcome.
   Status connect(const ConnectionConfig &config,
                  const Credentials &secret) override {
     ++connects;
@@ -98,13 +114,16 @@ class TestStation : public NativeStation {
     return rejection;
   }
 
+  /// Accepts continuation of a prepared connection.
   Status continueConnect() override { return Status::kOk; }
 
+  /// Records admission of a native disconnect.
   Status disconnect() override {
     ++disconnects;
     return Status::kOk;
   }
 
+  /// Copies the bounded set of configured scan records.
   Status readScan(ScanRecord *out, size_t capacity,
                   ScanRead &result) const override {
     if (read_error != Status::kOk) return read_error;
@@ -114,10 +133,12 @@ class TestStation : public NativeStation {
     return Status::kOk;
   }
 
+  /// Delivers one native event to the attached receiver, when present.
   void emit(Event event) {
     if (receiver_ != nullptr) receiver_->post(event);
   }
 
+  /// Emits association using the most recent connection configuration.
   void associated() {
     Event e{};
     e.kind = Event::kAssociated;
@@ -126,6 +147,7 @@ class TestStation : public NativeStation {
     emit(e);
   }
 
+  /// Emits IPv4 address readiness for the active connection.
   void ready() {
     Event e{};
     e.kind = Event::kAddressReady;
@@ -134,6 +156,7 @@ class TestStation : public NativeStation {
     emit(e);
   }
 
+  /// Emits disconnection from the most recently configured network.
   void disconnected() {
     Event e{};
     e.kind = Event::kDisconnected;
@@ -153,18 +176,22 @@ class TestStation : public NativeStation {
   std::vector<ScanRecord> aps;
 };
 
+/// Collects controller operation and link notifications for assertions.
 class Observer : public Controller::Listener {
  public:
+  /// Retains a delivered terminal operation result.
   void onOperationFinished(const OperationResult &result) override {
     results.push_back(result);
   }
 
+  /// Retains a delivered link-state publication.
   void onLinkChanged(const LinkState &link) override { links.push_back(link); }
 
   std::vector<OperationResult> results;
   std::vector<LinkState> links;
 };
 
+/// Executes enough eligible tasks to settle the test fakes' deferred work.
 inline void Pump(roo_scheduler::Scheduler &scheduler) {
   for (int i = 0; i < 12; ++i) scheduler.executeEligibleTasks();
 }

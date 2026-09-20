@@ -77,15 +77,18 @@ class Interface {
   /// Starts a physical disconnect and reports its lifecycle outcome.
   /// @param id Nonzero operation ID echoed in the deferred completion.
   virtual Status disconnect(OperationId id) = 0;
+
   /// Cancels a pending radio operation.
   /// @param target ID that completes with kCancelled rather than a new ID.
   virtual Status cancel(OperationId target) = 0;
+
   /// Copies records from a completed scan into caller-owned storage.
   /// @param out Destination record array.
   /// @param capacity Number of records that fit in @p out.
   /// @param result Receives count and truncation state on success.
   virtual Status readScanResults(ScanRecord *out, size_t capacity,
                                  ScanRead &result) const = 0;
+
   /// Detaches the sink and prevents all subsequent event delivery.
   virtual void shutdown() = 0;
 };

@@ -104,6 +104,8 @@ class Controller : private Interface::Sink {
 
   /// Prevents copying a controller because it owns active operation state.
   Controller(const Controller &) = delete;
+
+  /// Prevents assignment because a controller owns active operation state.
   Controller &operator=(const Controller &) = delete;
 
   /// Initializes storage/radio; restores enablement asynchronously before
@@ -195,16 +197,37 @@ class Controller : private Interface::Sink {
     roo_time::Uptime deadline;
   };
 
+  /// Admits an operation into an idle slot and schedules its execution.
   RequestResult admit(Slot &, OperationKind, ProfileId = 0);
+
+  /// Reports whether the radio can admit a new operation.
   Status radioAdmission() const;
+
+  /// Finds the live operation slot with the requested ID.
   Slot *find(OperationId);
+
+  /// Executes operations that have been admitted but not started.
   void execute();
+
+  /// Cancels expired native operations and settles expired cancellations.
   void checkTimeouts();
+
+  /// Settles a slot and notifies listeners of its terminal result.
   void finish(Slot &, Status, int32_t = 0, bool = false);
+
+  /// Closes the controller and optionally settles public work.
   void close(bool notify);
+
+  /// Starts the configured automatic profile connection when eligible.
   void startProfile();
+
+  /// Handles a terminal operation result from the radio adapter.
   void onOperationFinished(const OperationResult &) override;
+
+  /// Publishes an observed link-state change from the radio adapter.
   void onLinkChanged(const LinkState &) override;
+
+  /// Publishes and persists an observed radio enablement change.
   void onEnabledChanged(bool) override;
 
   Interface &interface_;

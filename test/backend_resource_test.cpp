@@ -10,11 +10,30 @@
 namespace {
 std::atomic<size_t> live{0}, peak{0}, allocations{0};
 
+/// Prefixes each tracked allocation with its requested byte count.
 struct alignas(std::max_align_t) Allocation {
   size_t size;
 };
+
+/// Exercises the operations that may retain bounded controller resources.
+void RunResourceCycle(roo_wifi::Controller& controller,
+                      roo_wifi::TestStation& native,
+                      roo_scheduler::Scheduler& scheduler) {
+  controller.scan();
+  roo_wifi::Pump(scheduler);
+  native.emit({roo_wifi::NativeStation::Event::kScanDone});
+  roo_wifi::Pump(scheduler);
+  roo_wifi::Controller::RequestResult request =
+      controller.connect(roo_wifi::TestConfig(), {});
+  controller.cancel(request.id);
+  roo_wifi::Pump(scheduler);
+  roo_wifi::Profile profile;
+  controller.loadProfile(1, profile);
+  scheduler.pruneCanceled();
+}
 }  // namespace
 
+/// Tracks live heap bytes and allocation count for the resource regression.
 void* operator new(size_t size) {
   Allocation* p =
       static_cast<Allocation*>(std::malloc(sizeof(Allocation) + size));
@@ -66,21 +85,13 @@ TEST(BackendResourceTest, RetainedPlateauAndAllocationFreeObservation) {
     CredentialUpdate update;
     update.intent = CredentialIntent::kClear;
     store.saveProfile(1, settings, update);
-    auto cycle = [&] {
-      controller.scan();
-      Pump(scheduler);
-      native.emit({NativeStation::Event::kScanDone});
-      Pump(scheduler);
-      Controller::RequestResult request = controller.connect(TestConfig(), {});
-      controller.cancel(request.id);
-      Pump(scheduler);
-      Profile profile;
-      controller.loadProfile(1, profile);
-      scheduler.pruneCanceled();
-    };
-    for (int i = 0; i < 20; ++i) cycle();
+    for (int i = 0; i < 20; ++i) {
+      RunResourceCycle(controller, native, scheduler);
+    }
     size_t retained = live.load();
-    for (int i = 0; i < 200; ++i) cycle();
+    for (int i = 0; i < 200; ++i) {
+      RunResourceCycle(controller, native, scheduler);
+    }
     size_t after = live.load();
     EXPECT_EQ(after, retained);
     size_t calls = allocations.load();

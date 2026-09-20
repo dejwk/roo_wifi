@@ -12,11 +12,12 @@ constexpr const char *kFields[] = {
     "ssid", "auth",   "hidden",  "ip",  "addr", "gw",  "dns1",
     "dns2", "prefix", "dns2set", "mac", "auto", "enc", "secret"};
 
+/// Formats a stable field key for the supplied profile.
 void Key(ProfileId id, const char *field, char (&out)[16]) {
   snprintf(out, sizeof(out), "%08lx%s", static_cast<unsigned long>(id), field);
 }
 
-// Each field has a stable byte representation independent of C++ padding/ABI.
+/// Encodes one field independently of C++ padding and ABI details.
 size_t Encode(size_t f, const ProfileSettings &s, const Credentials &c,
               uint8_t *out) {
   const ConnectionConfig &p = s.connection;
@@ -67,6 +68,7 @@ size_t Encode(size_t f, const ProfileSettings &s, const Credentials &c,
   return 1;
 }
 
+/// Decodes and validates one field from its stable byte representation.
 Status Decode(size_t f, const uint8_t *data, size_t n, ProfileSettings &s,
               Credentials &c) {
   ConnectionConfig &p = s.connection;

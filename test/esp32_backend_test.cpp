@@ -9,6 +9,7 @@
 
 namespace roo_wifi {
 namespace {
+/// Runs scheduler work while allowing the ESP32 simulation to advance.
 void RunBackend(roo_scheduler::Scheduler& scheduler) {
   for (int i = 0; i < 1000; ++i) {
     scheduler.executeEligibleTasks();

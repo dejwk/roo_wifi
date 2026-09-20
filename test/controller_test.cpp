@@ -2,6 +2,7 @@
 #include "gtest/gtest.h"
 
 namespace roo_wifi {
+/// Provides initialized controller dependencies and a notification observer.
 class BackendTest : public testing::Test {
  protected:
   roo_scheduler::Scheduler scheduler;
@@ -377,8 +378,10 @@ namespace roo_wifi {
 // Verifies a failed ready write is reread, distinguishing confirmed completion
 // from an unreadable commit outcome without claiming atomic replacement.
 TEST(StoreTest, FinalCommitVerification) {
+  /// Simulates a final commit whose write result is ambiguous.
   class AmbiguousStore : public MemoryStore {
    public:
+    /// Writes the field but reports failure for the final ready marker.
     Status writeField(const char* key, const uint8_t* data,
                       size_t size) override {
       Status status = MemoryStore::writeField(key, data, size);
@@ -389,6 +392,7 @@ TEST(StoreTest, FinalCommitVerification) {
       return status;
     }
 
+    /// Optionally makes final-commit verification unreadable.
     Status readField(const char* key, uint8_t* out,
                      size_t& size) const override {
       if (final_written && unreadable) return Status::kStorageFailure;
@@ -405,8 +409,7 @@ TEST(StoreTest, FinalCommitVerification) {
   update.intent = CredentialIntent::kClear;
   EXPECT_EQ(store.saveProfile(1, settings, update), Status::kOk);
   store.unreadable = true;
-  EXPECT_EQ(store.saveProfile(1, settings, update),
-            Status::kCommitUnknown);
+  EXPECT_EQ(store.saveProfile(1, settings, update), Status::kCommitUnknown);
   Profile untouched;
   untouched.id = 99;
   EXPECT_EQ(store.loadProfile(1, untouched), Status::kStorageFailure);

@@ -54,8 +54,13 @@ class Esp32Station : public NativeStation {
                   ScanRead &result) const override;
 
  private:
+  /// Forwards an ESP event callback to its station instance.
   static void Dispatch(void *, esp_event_base_t, int32_t, void *);
+
+  /// Translates one ESP event into the portable native-station lifecycle.
   void event(esp_event_base_t, int32_t, void *);
+
+  /// Applies IP, MAC, and AP settings for the selected scan candidate.
   Status startSelected(const wifi_ap_record_t &);
   Receiver *receiver_ = nullptr;
   esp_event_handler_instance_t wifi_handler_ = nullptr;

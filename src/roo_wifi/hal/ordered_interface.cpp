@@ -276,7 +276,8 @@ void OrderedInterface::process(const NativeStation::Event &event) {
     case E::kAssociated:
       if (link_.phase != LinkPhase::kConnecting ||
           event.link.ssid.size != link_.ssid.size ||
-          memcmp(event.link.ssid.bytes, link_.ssid.bytes, link_.ssid.size)) {
+          memcmp(event.link.ssid.bytes, link_.ssid.bytes, link_.ssid.size) !=
+              0) {
         return;
       }
       {
@@ -290,8 +291,9 @@ void OrderedInterface::process(const NativeStation::Event &event) {
     case E::kAddressReady:
       if (event.link.ssid.size != 0 &&
           (event.link.ssid.size != link_.ssid.size ||
-           memcmp(event.link.ssid.bytes, link_.ssid.bytes, link_.ssid.size) ||
-           memcmp(event.link.bssid.bytes, link_.bssid.bytes, 6))) {
+           memcmp(event.link.ssid.bytes, link_.ssid.bytes, link_.ssid.size) !=
+               0 ||
+           memcmp(event.link.bssid.bytes, link_.bssid.bytes, 6) != 0)) {
         return;
       }
       if ((link_.phase != LinkPhase::kAssociated &&
@@ -324,7 +326,8 @@ void OrderedInterface::process(const NativeStation::Event &event) {
     case E::kDisconnected:
       if (event.link.ssid.size != 0 &&
           (event.link.ssid.size != link_.ssid.size ||
-           memcmp(event.link.ssid.bytes, link_.ssid.bytes, link_.ssid.size))) {
+           memcmp(event.link.ssid.bytes, link_.ssid.bytes, link_.ssid.size) !=
+               0)) {
         return;
       }
       link_.phase = LinkPhase::kIdle;

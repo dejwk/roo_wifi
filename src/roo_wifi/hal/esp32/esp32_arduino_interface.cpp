@@ -12,6 +12,7 @@ namespace {
 roo::mutex owner_mutex;
 Esp32Station *owner = nullptr;
 
+/// Maps an ESP authentication mode to its portable equivalent.
 AuthMode Auth(wifi_auth_mode_t mode) {
   switch (mode) {
     case WIFI_AUTH_OPEN:
@@ -37,6 +38,7 @@ AuthMode Auth(wifi_auth_mode_t mode) {
   }
 }
 
+/// Maps an ESP cipher type to its portable equivalent.
 CipherType Cipher(wifi_cipher_type_t c) {
   switch (c) {
     case WIFI_CIPHER_TYPE_NONE:
@@ -64,6 +66,7 @@ CipherType Cipher(wifi_cipher_type_t c) {
   }
 }
 
+/// Translates an ESP access-point record into a portable scan record.
 ScanRecord Record(const wifi_ap_record_t &ap) {
   ScanRecord r;
   r.ssid.size = strnlen(reinterpret_cast<const char *>(ap.ssid), 32);
@@ -82,14 +85,17 @@ ScanRecord Record(const wifi_ap_record_t &ap) {
   return r;
 }
 
+/// Translates an Arduino IPv4 address into its portable representation.
 Ipv4Address Address(const IPAddress &ip) {
   return {{ip[0], ip[1], ip[2], ip[3]}};
 }
 
+/// Translates a portable IPv4 address into its Arduino representation.
 IPAddress Address(const Ipv4Address &ip) {
   return IPAddress(ip.bytes[0], ip.bytes[1], ip.bytes[2], ip.bytes[3]);
 }
 
+/// Maps an ESP result code to the portable connection outcome.
 Status Result(esp_err_t code) {
   return code == ESP_OK ? Status::kOk : Status::kConnectionFailed;
 }
@@ -284,8 +290,9 @@ Status Esp32Station::startSelected(const wifi_ap_record_t &ap) {
     return Status::kConnectionFailed;
   esp_netif_t *netif = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
   if (netif == nullptr) return Status::kConnectionFailed;
-  esp_err_t status = esp_netif_dhcpc_stop(netif);
-  if (status != ESP_OK && status != ESP_ERR_ESP_NETIF_DHCP_ALREADY_STOPPED)
+  esp_err_t native_status = esp_netif_dhcpc_stop(netif);
+  if (native_status != ESP_OK &&
+      native_status != ESP_ERR_ESP_NETIF_DHCP_ALREADY_STOPPED)
     return Status::kConnectionFailed;
   esp_netif_ip_info_t ip = {};
   esp_netif_dns_info_t dns1 = {};
@@ -308,8 +315,9 @@ Status Esp32Station::startSelected(const wifi_ap_record_t &ap) {
     return Status::kConnectionFailed;
   }
   if (config_.ip_mode == IpMode::kDhcp) {
-    status = esp_netif_dhcpc_start(netif);
-    if (status != ESP_OK && status != ESP_ERR_ESP_NETIF_DHCP_ALREADY_STARTED)
+    native_status = esp_netif_dhcpc_start(netif);
+    if (native_status != ESP_OK &&
+        native_status != ESP_ERR_ESP_NETIF_DHCP_ALREADY_STARTED)
       return Status::kConnectionFailed;
   }
   wifi_config_t config = {};

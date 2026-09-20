@@ -26,11 +26,13 @@ struct OperationResult {
 
   /// Action that completed.
   OperationKind kind = OperationKind::kScan;
+
   /// Successful completion or one terminal failure/cancellation.
   Status error = Status::kOk;
 
   /// Created, saved, removed, or connected profile key when applicable.
   ProfileId profile_id = 0;
+
   /// Platform diagnostic code when @p has_native_code is true.
   int32_t native_code = 0;
 

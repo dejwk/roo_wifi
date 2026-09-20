@@ -4,6 +4,7 @@
 
 namespace roo_wifi {
 namespace {
+/// Maps a Preferences read outcome to its portable equivalent.
 Status Read(roo_prefs::ReadResult result) {
   switch (result) {
     case roo_prefs::ReadResult::kOk:
@@ -17,6 +18,7 @@ Status Read(roo_prefs::ReadResult result) {
   }
 }
 
+/// Derives the legacy credential key associated with an SSID.
 void LegacyKey(const Ssid &ssid, char (&out)[16]) {
   uint64_t hash = 525201411107845655ull;
   for (size_t i = 0; i < ssid.size; ++i) {

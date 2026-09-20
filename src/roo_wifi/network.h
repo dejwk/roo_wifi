@@ -14,11 +14,13 @@ struct Ssid {
 
 /// Holds a six-byte IEEE 802 MAC address in network byte order.
 struct MacAddress {
+  /// Six address octets in network byte order.
   uint8_t bytes[6] = {};
 };
 
 /// Holds a four-byte IPv4 address in dotted-quad byte order.
 struct Ipv4Address {
+  /// Four address octets in dotted-quad order.
   uint8_t bytes[4] = {};
 };
 
