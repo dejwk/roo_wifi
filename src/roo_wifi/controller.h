@@ -30,9 +30,11 @@ class Controller : private Interface::Sink {
     uint32_t transition_timeout_ms = 5000;
   };
 
-  /// Returns immediate operation admission status and its deferred-completion ID.
+  /// Returns immediate operation admission status and its deferred-completion
+  /// ID.
   struct RequestResult {
-    /// Nonzero admitted operation ID; zero means no completion callback follows.
+    /// Nonzero admitted operation ID; zero means no completion callback
+    /// follows.
     OperationId id = 0;
 
     /// Immediate admission or validation result.
@@ -40,7 +42,8 @@ class Controller : private Interface::Sink {
   };
 
   /// Borrows records from the controller's latest successful scan publication.
-  /// The records remain valid until the next successful publication or shutdown.
+  /// The records remain valid until the next successful publication or
+  /// shutdown.
   struct ScanSnapshot {
     /// Monotonically increasing publication generation.
     uint64_t generation = 0;
