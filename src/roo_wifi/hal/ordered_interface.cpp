@@ -220,7 +220,7 @@ void OrderedInterface::startConnection() {
 void OrderedInterface::finishStation(Status error, int32_t code) {
   if (station_.id == 0) return;
   OperationResult result = station_;
-  result.error = cancelling_ ? Status::kCancelled : error;
+  result.status = cancelling_ ? Status::kCancelled : error;
   result.native_code = code;
   result.has_native_code = code != 0;
   station_ = {};
@@ -232,7 +232,7 @@ void OrderedInterface::finishStation(Status error, int32_t code) {
 void OrderedInterface::finishScan(Status error, int32_t code) {
   if (scan_.id == 0) return;
   OperationResult result = scan_;
-  result.error = scan_cancelling_ ? Status::kCancelled : error;
+  result.status = scan_cancelling_ ? Status::kCancelled : error;
   result.native_code = code;
   result.has_native_code = code != 0;
   scan_ = {};
@@ -255,7 +255,7 @@ void OrderedInterface::process(const NativeStation::Event &event) {
       }
       if (station_.id != 0 && station_.kind == OperationKind::kEnable &&
           enabled_ == desired_enabled_) {
-        finishStation(event.error, event.native_code);
+        finishStation(event.status, event.native_code);
       }
       break;
     case E::kPrepared:
@@ -271,7 +271,7 @@ void OrderedInterface::process(const NativeStation::Event &event) {
       }
       break;
     case E::kScanDone:
-      finishScan(event.error, event.native_code);
+      finishScan(event.status, event.native_code);
       break;
     case E::kAssociated:
       if (link_.phase != LinkPhase::kConnecting ||
@@ -332,7 +332,7 @@ void OrderedInterface::process(const NativeStation::Event &event) {
       }
       link_.phase = LinkPhase::kIdle;
       link_.has_ipv4 = false;
-      link_.reason = event.error;
+      link_.reason = event.status;
       link_.native_code = event.native_code;
       link_.has_native_code = event.native_code != 0;
       sink_->onLinkChanged(link_);

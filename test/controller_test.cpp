@@ -40,7 +40,7 @@ TEST_F(BackendTest, OwnedInputAndAddressReadiness) {
   Pump(scheduler);
   ASSERT_EQ(observer.results.size(), 1u);
   EXPECT_EQ(observer.results[0].id, r.id);
-  EXPECT_EQ(observer.results[0].error, Status::kOk);
+  EXPECT_EQ(observer.results[0].status, Status::kOk);
   native.disconnected();
   Pump(scheduler);
   EXPECT_EQ(observer.results.size(), 1u);
@@ -77,13 +77,13 @@ TEST_F(BackendTest, CancelBeforeAssociationAndSameSsidRetry) {
   Controller::RequestResult a = controller.connect(TestConfig(), {});
   Pump(scheduler);
   EXPECT_EQ(controller.cancel(a.id), Status::kOk);
-  EXPECT_EQ(controller.connect(TestConfig(), {}).error, Status::kBusy);
+  EXPECT_EQ(controller.connect(TestConfig(), {}).status, Status::kBusy);
   Pump(scheduler);
   EXPECT_TRUE(observer.results.empty());
   native.disconnected();
   Pump(scheduler);
   ASSERT_EQ(observer.results.size(), 1u);
-  EXPECT_EQ(observer.results[0].error, Status::kCancelled);
+  EXPECT_EQ(observer.results[0].status, Status::kCancelled);
   Controller::RequestResult b = controller.connect(TestConfig(), {});
   EXPECT_NE(b.id, a.id);
   Pump(scheduler);
@@ -112,7 +112,7 @@ TEST_F(BackendTest, IndependentSlotsAndCancelledSave) {
   Profile out;
   EXPECT_EQ(store.loadProfile(42, out), Status::kNotFound);
   ASSERT_EQ(observer.results.size(), 1u);
-  EXPECT_EQ(observer.results[0].error, Status::kCancelled);
+  EXPECT_EQ(observer.results[0].status, Status::kCancelled);
 }
 
 // Verifies failed scans retain the old snapshot and repeated scans get new IDs.
@@ -133,7 +133,7 @@ TEST_F(BackendTest, SnapshotLifetimeAndMetadata) {
   Pump(scheduler);
   NativeStation::Event event{};
   event.kind = NativeStation::Event::kScanDone;
-  event.error = Status::kConnectionFailed;
+  event.status = Status::kConnectionFailed;
   native.emit(event);
   Pump(scheduler);
   EXPECT_NE(a.id, b.id);
@@ -151,8 +151,8 @@ TEST_F(BackendTest, ShutdownNeutralizesQueuedEvents) {
   Pump(scheduler);
   ASSERT_EQ(observer.results.size(), 1u);
   EXPECT_EQ(observer.results[0].id, r.id);
-  EXPECT_EQ(observer.results[0].error, Status::kCancelled);
-  EXPECT_EQ(controller.scan().error, Status::kNotStarted);
+  EXPECT_EQ(observer.results[0].status, Status::kCancelled);
+  EXPECT_EQ(controller.scan().status, Status::kNotStarted);
 }
 
 // Verifies actual physical state remains observable after persistence failure.
@@ -163,7 +163,7 @@ TEST_F(BackendTest, EnablePersistenceFailure) {
   EXPECT_FALSE(controller.isEnabled());
   ASSERT_EQ(observer.results.size(), 1u);
   EXPECT_EQ(observer.results[0].id, r.id);
-  EXPECT_EQ(observer.results[0].error, Status::kStorageFailure);
+  EXPECT_EQ(observer.results[0].status, Status::kStorageFailure);
 }
 
 // Verifies direct temporary connections leave persistence untouched.
@@ -286,18 +286,18 @@ TEST(TimeoutTest, UnsettledNativeWorkCannotOverlapNewAttempt) {
   Pump(scheduler);
   ASSERT_EQ(observer.results.size(), 1u);
   EXPECT_EQ(observer.results[0].id, request.id);
-  EXPECT_EQ(observer.results[0].error, Status::kTimeout);
+  EXPECT_EQ(observer.results[0].status, Status::kTimeout);
   native.disconnected();
   Pump(scheduler);
   EXPECT_EQ(observer.results.size(), 1u);
-  EXPECT_EQ(controller.connect(TestConfig(), {}).error, Status::kNotStarted);
+  EXPECT_EQ(controller.connect(TestConfig(), {}).status, Status::kNotStarted);
   ProfileSettings settings;
   settings.connection = TestConfig();
   CredentialUpdate update;
   update.intent = CredentialIntent::kClear;
   EXPECT_NE(controller.saveProfile(1, settings, update).id, 0u);
   Pump(scheduler);
-  EXPECT_EQ(observer.results.back().error, Status::kOk);
+  EXPECT_EQ(observer.results.back().status, Status::kOk);
   controller.removeListener(observer);
 }
 
@@ -342,7 +342,7 @@ TEST_F(BackendTest, SavedProfileSurvivesNativeRejection) {
   Controller::RequestResult request = controller.connect(1);
   Pump(scheduler);
   EXPECT_EQ(observer.results.back().id, request.id);
-  EXPECT_EQ(observer.results.back().error, Status::kConnectionFailed);
+  EXPECT_EQ(observer.results.back().status, Status::kConnectionFailed);
   Profile out;
   EXPECT_EQ(controller.loadProfile(1, out), Status::kOk);
 }
@@ -355,7 +355,7 @@ TEST_F(BackendTest, CancelBeforeNativeStart) {
   Pump(scheduler);
   EXPECT_EQ(native.connects, 0);
   ASSERT_EQ(observer.results.size(), 1u);
-  EXPECT_EQ(observer.results[0].error, Status::kCancelled);
+  EXPECT_EQ(observer.results[0].status, Status::kCancelled);
 }
 
 // Verifies bounded event overflow faults radio admission instead of reusing
@@ -367,10 +367,10 @@ TEST_F(BackendTest, NativeHandoffOverflowFailsClosed) {
   Pump(scheduler);
   ASSERT_EQ(observer.results.size(), 1u);
   EXPECT_EQ(observer.results[0].id, request.id);
-  EXPECT_EQ(observer.results[0].error, Status::kConnectionFailed);
+  EXPECT_EQ(observer.results[0].status, Status::kConnectionFailed);
   controller.scan();
   Pump(scheduler);
-  EXPECT_EQ(observer.results.back().error, Status::kNotStarted);
+  EXPECT_EQ(observer.results.back().status, Status::kNotStarted);
 }
 }  // namespace roo_wifi
 

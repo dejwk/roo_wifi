@@ -28,7 +28,7 @@ struct OperationResult {
   OperationKind kind = OperationKind::kScan;
 
   /// Successful completion or one terminal failure/cancellation.
-  Status error = Status::kOk;
+  Status status = Status::kOk;
 
   /// Created, saved, removed, or connected profile key when applicable.
   ProfileId profile_id = 0;

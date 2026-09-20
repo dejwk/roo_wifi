@@ -345,12 +345,14 @@ void Esp32Station::event(esp_event_base_t base, int32_t id, void *data) {
   Event event{};
   if (base == WIFI_EVENT) {
     switch (id) {
-      case WIFI_EVENT_STA_START:
+      case WIFI_EVENT_STA_START: {
         event.kind = Event::kEnabled;
         break;
-      case WIFI_EVENT_STA_STOP:
+      }
+      case WIFI_EVENT_STA_STOP: {
         event.kind = Event::kDisabled;
         break;
+      }
       case WIFI_EVENT_SCAN_DONE: {
         if (!selecting_ && !scan_active_) return;
         const wifi_event_sta_scan_done_t &done =
@@ -363,13 +365,13 @@ void Esp32Station::event(esp_event_base_t base, int32_t id, void *data) {
         std::vector<wifi_ap_record_t> aps(std::max<uint16_t>(count, 1));
         uint16_t fetched = std::max<uint16_t>(count, 1);
         esp_err_t error = esp_wifi_scan_get_ap_records(&fetched, aps.data());
-        event.error = done.status == 0 && error == ESP_OK
-                          ? Status::kOk
-                          : Status::kConnectionFailed;
+        event.status = done.status == 0 && error == ESP_OK
+                           ? Status::kOk
+                           : Status::kConnectionFailed;
         event.native_code = done.status != 0 ? done.status : error;
         if (selecting_) {
           selecting_ = false;
-          if (!scan_cancelled_ && event.error == Status::kOk) {
+          if (!scan_cancelled_ && event.status == Status::kOk) {
             for (size_t i = 0; i < fetched; ++i) {
               if (Auth(aps[i].authmode) != config_.security) continue;
               selected_ = aps[i];
@@ -381,11 +383,11 @@ void Esp32Station::event(esp_event_base_t base, int32_t id, void *data) {
           secret_ = {};
           event.kind = Event::kDisconnected;
           event.link.ssid = config_.ssid;
-          event.error = Status::kConnectionFailed;
+          event.status = Status::kConnectionFailed;
         } else {
           scan_active_ = false;
           event.kind = Event::kScanDone;
-          if (event.error == Status::kOk && !scan_cancelled_) {
+          if (event.status == Status::kOk && !scan_cancelled_) {
             records_.clear();
             for (size_t i = 0; i < std::min<size_t>(fetched, capacity_); ++i)
               records_.push_back(Record(aps[i]));
@@ -427,11 +429,12 @@ void Esp32Station::event(esp_event_base_t base, int32_t id, void *data) {
         memcpy(event.link.ssid.bytes, info.ssid, event.link.ssid.size);
         memcpy(event.link.bssid.bytes, info.bssid, 6);
         event.native_code = info.reason;
-        event.error = Status::kConnectionFailed;
+        event.status = Status::kConnectionFailed;
         break;
       }
-      default:
+      default: {
         return;
+      }
     }
   } else if (base == IP_EVENT && id == IP_EVENT_STA_GOT_IP) {
     const ip_event_got_ip_t &info = *static_cast<ip_event_got_ip_t *>(data);

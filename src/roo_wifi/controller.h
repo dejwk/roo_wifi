@@ -38,7 +38,7 @@ class Controller : private Interface::Sink {
     OperationId id = 0;
 
     /// Immediate admission or validation result.
-    Status error = Status::kOk;
+    Status status = Status::kOk;
   };
 
   /// Borrows records from the controller's latest successful scan publication.

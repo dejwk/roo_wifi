@@ -35,7 +35,7 @@ class NativeStation {
     LinkState link;
 
     /// Portable outcome carried by the event.
-    Status error = Status::kOk;
+    Status status = Status::kOk;
 
     /// Optional native platform diagnostic.
     int32_t native_code = 0;

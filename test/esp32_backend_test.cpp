@@ -60,7 +60,7 @@ TEST(Esp32BackendTest, SecuritySelectionAndSwitch) {
   RunBackend(scheduler);
   ASSERT_FALSE(observer.results.empty());
   EXPECT_EQ(observer.results.back().id, secure_request.id);
-  EXPECT_EQ(observer.results.back().error, Status::kOk);
+  EXPECT_EQ(observer.results.back().status, Status::kOk);
   EXPECT_EQ(controller.linkState().phase, LinkPhase::kAddressReady);
   EXPECT_EQ(controller.linkState().bssid.bytes[5], 2);
   EXPECT_EQ(controller.linkState().address.bytes[2], 7);
@@ -94,7 +94,7 @@ TEST(Esp32BackendTest, SecuritySelectionAndSwitch) {
   EXPECT_EQ(memcmp(controller.linkState().station_mac.bytes, original_mac, 6),
             0);
   EXPECT_EQ(observer.results.back().id, open_request.id);
-  EXPECT_EQ(observer.results.back().error, Status::kOk);
+  EXPECT_EQ(observer.results.back().status, Status::kOk);
   EXPECT_EQ(controller.linkState().bssid.bytes[5], 1);
   controller.removeListener(observer);
 }
