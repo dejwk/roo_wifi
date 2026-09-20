@@ -38,3 +38,10 @@ or newer, a plain command defaults to that profile and prints a notice:
 
 The files under .roo_testing/bazelrc/esp32 are vendored from roo_testing;
 follow their canonical-source headers when refreshing them.
+
+## Design
+
+The proposed [Wi-Fi backend foundation](docs/wifi_backend_design.md) defines the
+platform-independent API, HAL evolution, profile persistence, and backend
+validation plan. Its [design authoring rules](.github/instructions/embedded-design-doc-authoring.instructions.md)
+apply repository-wide.
