@@ -22,7 +22,13 @@ cc_library(
 cc_test(
     name = "portable_api_compile_test",
     srcs = ["//test:portable_api_compile_test.cpp"],
-    copts = ["-fno-exceptions", "-fno-rtti"],
+    copts = [
+        "-fno-exceptions",
+        "-fno-rtti",
+        "-UARDUINO",
+        "-UESP32",
+        "-UESP_PLATFORM",
+    ],
     deps = [":roo_wifi"],
 )
 

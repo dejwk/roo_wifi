@@ -23,7 +23,7 @@ class BackendTest : public testing::Test {
 TEST_F(BackendTest, OwnedInputAndAddressReadiness) {
   ConnectionConfig c = TestConfig();
   RequestResult r = controller.connect(c, {});
-  ASSERT_NE(r.id, 0);
+  ASSERT_NE(r.id, 0u);
   c.ssid.bytes[0] = 'X';
   EXPECT_TRUE(observer.results.empty());
   Pump(scheduler);
@@ -33,12 +33,12 @@ TEST_F(BackendTest, OwnedInputAndAddressReadiness) {
   EXPECT_TRUE(observer.results.empty());
   native.ready();
   Pump(scheduler);
-  ASSERT_EQ(observer.results.size(), 1);
+  ASSERT_EQ(observer.results.size(), 1u);
   EXPECT_EQ(observer.results[0].id, r.id);
   EXPECT_EQ(observer.results[0].error, Error::kOk);
   native.disconnected();
   Pump(scheduler);
-  EXPECT_EQ(observer.results.size(), 1);
+  EXPECT_EQ(observer.results.size(), 1u);
   EXPECT_EQ(controller.linkState().connection_id, r.id);
 }
 // Verifies switching processes A's queued disconnect before starting B.
@@ -96,7 +96,7 @@ TEST_F(BackendTest, IndependentSlotsAndCancelledSave) {
   CredentialUpdate u;
   u.intent = CredentialIntent::kClear;
   RequestResult save = controller.saveProfile(42, p, u);
-  ASSERT_NE(save.id, 0);
+  ASSERT_NE(save.id, 0u);
   ASSERT_NE(scan.id, 0);
   EXPECT_EQ(controller.cancel(save.id), Error::kOk);
   EXPECT_TRUE(observer.results.empty());
