@@ -28,8 +28,16 @@ policy on top of this baseline.
   matching the spelling of the underlying field. Language- and
   framework-mandated names such as allocation operators and Arduino `setup()`
   and `loop()` retain their required spelling.
-- Favor readability. Avoid redundant branches, repeated explanations, and
-  unnecessary line count when the code can stay clear without them.
+- Optimize code for human readability and maintainability over terseness. Do
+  not compress declarations, control flow, or documentation merely to reduce
+  line count.
+- Prefer cohesive semantic groupings, descriptive names, explicit ownership,
+  visible dependency boundaries, and enough whitespace to make related
+  concepts easy to scan. Avoid unnecessary abstraction, cleverness, and
+  indirection.
+- Preserve existing documentation and explanatory comments during refactors
+  unless they are obsolete. Relocate them with the declarations or behavior
+  they describe.
 - Keep `CHECK` and related assertion macros at their point of use so failures
   report the source line that expresses the violated contract.
 - Embedded-target code must build with exceptions disabled (`-fno-exceptions`);
@@ -98,6 +106,8 @@ policy on top of this baseline.
   validation commands, compile-coverage checks, and integration builds.
 - Before handing code over for review or submitting it, run `clang-format` on
   every changed C++ source and header file.
+- Before finishing a refactor, compare the old and new public API documentation
+  and verify that useful context was not lost.
 
 ## Checklist
 
@@ -113,6 +123,7 @@ policy on top of this baseline.
 - Validation uses the narrowest relevant target first.
 - `clang-format` has been run on every changed C++ source and header file
   before review or submission.
+- Refactors preserve useful public API documentation and explanatory context.
 - Complex implementation comments explain intent, not mechanics.
 - Complex algorithms explain their main strategy and important branches.
 - Non-trivial helper functions and methods are documented.
