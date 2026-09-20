@@ -58,9 +58,12 @@ class Esp32Station : public NativeStation {
   void event(esp_event_base_t, int32_t, void *);
   Status startSelected(const wifi_ap_record_t &);
   Receiver *receiver_ = nullptr;
-  esp_event_handler_instance_t wifi_handler_ = nullptr, ip_handler_ = nullptr;
+  esp_event_handler_instance_t wifi_handler_ = nullptr;
+  esp_event_handler_instance_t ip_handler_ = nullptr;
   mutable roo::mutex mutex_;
-  bool selecting_ = false, scan_active_ = false, scan_cancelled_ = false;
+  bool selecting_ = false;
+  bool scan_active_ = false;
+  bool scan_cancelled_ = false;
   bool prepared_ = false;
   wifi_ap_record_t selected_ = {};
   ConnectionConfig config_;

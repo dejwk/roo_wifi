@@ -72,9 +72,9 @@ Status OrderedInterface::connect(OperationId id, const ConnectionConfig &config,
   if (link_.phase != LinkPhase::kIdle) {
     waiting_disconnect_ = true;
     error = native_.disconnect();
-    if (error == Status::kNotFound)
+    if (error == Status::kNotFound) {
       post({NativeStation::Event::kDisconnected, link_});
-    else if (error != Status::kOk) {
+    } else if (error != Status::kOk) {
       station_ = {};
       waiting_disconnect_ = false;
       credentials_ = {};
@@ -158,9 +158,9 @@ void OrderedInterface::shutdown() {
 
 void OrderedInterface::post(const NativeStation::Event &event) {
   roo::lock_guard<roo::mutex> lock(mutex_);
-  if (count_ == queue_.size())
+  if (count_ == queue_.size()) {
     overflow_ = true;
-  else {
+  } else {
     queue_[(head_ + count_) % queue_.size()] = event;
     ++count_;
   }
@@ -254,8 +254,9 @@ void OrderedInterface::process(const NativeStation::Event &event) {
         sink_->onLinkChanged(link_);
       }
       if (station_.id && station_.kind == OperationKind::kEnable &&
-          enabled_ == desired_enabled_)
+          enabled_ == desired_enabled_) {
         finishStation(event.error, event.native_code);
+      }
       break;
     case E::kPrepared:
       if (station_.id && station_.kind == OperationKind::kConnect &&
@@ -275,8 +276,9 @@ void OrderedInterface::process(const NativeStation::Event &event) {
     case E::kAssociated:
       if (link_.phase != LinkPhase::kConnecting ||
           event.link.ssid.size != link_.ssid.size ||
-          memcmp(event.link.ssid.bytes, link_.ssid.bytes, link_.ssid.size))
+          memcmp(event.link.ssid.bytes, link_.ssid.bytes, link_.ssid.size)) {
         return;
+      }
       {
         OperationId id = link_.connection_id;
         link_ = event.link;
@@ -289,12 +291,14 @@ void OrderedInterface::process(const NativeStation::Event &event) {
       if (event.link.ssid.size &&
           (event.link.ssid.size != link_.ssid.size ||
            memcmp(event.link.ssid.bytes, link_.ssid.bytes, link_.ssid.size) ||
-           memcmp(event.link.bssid.bytes, link_.bssid.bytes, 6)))
+           memcmp(event.link.bssid.bytes, link_.bssid.bytes, 6))) {
         return;
+      }
       if ((link_.phase != LinkPhase::kAssociated &&
            link_.phase != LinkPhase::kAddressReady) ||
-          waiting_disconnect_ || cancelling_)
+          waiting_disconnect_ || cancelling_) {
         return;
+      }
       link_.address = event.link.address;
       link_.gateway = event.link.gateway;
       link_.dns1 = event.link.dns1;
@@ -306,8 +310,9 @@ void OrderedInterface::process(const NativeStation::Event &event) {
       link_.phase = LinkPhase::kAddressReady;
       sink_->onLinkChanged(link_);
       if (station_.kind == OperationKind::kConnect &&
-          station_.id == link_.connection_id)
+          station_.id == link_.connection_id) {
         finishStation(Status::kOk);
+      }
       break;
     case E::kAddressLost:
       if (link_.phase == LinkPhase::kAddressReady) {
@@ -319,8 +324,9 @@ void OrderedInterface::process(const NativeStation::Event &event) {
     case E::kDisconnected:
       if (event.link.ssid.size &&
           (event.link.ssid.size != link_.ssid.size ||
-           memcmp(event.link.ssid.bytes, link_.ssid.bytes, link_.ssid.size)))
+           memcmp(event.link.ssid.bytes, link_.ssid.bytes, link_.ssid.size))) {
         return;
+      }
       link_.phase = LinkPhase::kIdle;
       link_.has_ipv4 = false;
       link_.reason = event.error;
@@ -331,11 +337,12 @@ void OrderedInterface::process(const NativeStation::Event &event) {
         if (waiting_disconnect_ && station_.kind == OperationKind::kConnect &&
             !cancelling_) {
           waiting_disconnect_ = false;
-        } else if (station_.kind != OperationKind::kEnable)
+        } else if (station_.kind != OperationKind::kEnable) {
           finishStation(station_.kind == OperationKind::kDisconnect
                             ? Status::kOk
                             : Status::kConnectionFailed,
                         event.native_code);
+        }
       }
       break;
   }

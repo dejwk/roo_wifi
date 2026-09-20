@@ -56,7 +56,8 @@ class MemoryStore : public FieldStore {
   }
 
   std::map<std::string, std::vector<uint8_t>> values;
-  int writes = 0, fail_at = -1;
+  int writes = 0;
+  int fail_at = -1;
   bool enabled = false;
   Status enabled_error = Status::kOk;
 };
@@ -141,10 +142,14 @@ class TestStation : public NativeStation {
   }
 
   Receiver *receiver_ = nullptr;
-  int scans = 0, scan_stops = 0, connects = 0, disconnects = 0;
+  int scans = 0;
+  int scan_stops = 0;
+  int connects = 0;
+  int disconnects = 0;
   ConnectionConfig last_config;
   Credentials last_secret;
-  Status rejection = Status::kOk, read_error = Status::kOk;
+  Status rejection = Status::kOk;
+  Status read_error = Status::kOk;
   std::vector<ScanRecord> aps;
 };
 

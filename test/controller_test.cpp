@@ -395,7 +395,8 @@ TEST(StoreTest, FinalCommitVerification) {
       return MemoryStore::readField(key, out, size);
     }
 
-    bool final_written = false, unreadable = false;
+    bool final_written = false;
+    bool unreadable = false;
   } store;
 
   ProfileSettings settings;

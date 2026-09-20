@@ -59,8 +59,9 @@ void Controller::shutdown() { close(true); }
 
 void Controller::addListener(Listener &listener) {
   if (std::find(listeners_.begin(), listeners_.end(), &listener) ==
-      listeners_.end())
+      listeners_.end()) {
     listeners_.push_back(&listener);
+  }
 }
 
 void Controller::removeListener(Listener &listener) {
@@ -120,8 +121,9 @@ RequestResult Controller::scan() {
   if (error != Status::kOk) return {0, error};
   if (!enabled_) return {0, Status::kDisabled};
   if (station_.result.id ||
-      (link_.phase != LinkPhase::kIdle && !support().scan_while_connected))
+      (link_.phase != LinkPhase::kIdle && !support().scan_while_connected)) {
     return {0, Status::kBusy};
+  }
   return admit(scan_, OperationKind::kScan);
 }
 
@@ -271,8 +273,9 @@ void Controller::checkTimeouts() {
   if (closed_) return;
   for (Slot *slot : {&station_, &scan_}) {
     if (!slot->result.id || !slot->started ||
-        roo_time::Uptime::Now() < slot->deadline)
+        roo_time::Uptime::Now() < slot->deadline) {
       continue;
+    }
     if (slot->timed_out || slot->cancelled) {
       faulted_ = true;
       reconnect_profile_ = 0;
@@ -300,8 +303,9 @@ void Controller::finish(Slot &slot, Status error, int32_t native,
   if (result.kind == OperationKind::kScan)
     for (Listener *listener : listeners_) listener->onScanStateChanged(false);
   if (result.kind == OperationKind::kSave ||
-      result.kind == OperationKind::kRemove)
+      result.kind == OperationKind::kRemove) {
     for (Listener *listener : listeners_) listener->onProfilesChanged();
+  }
   for (Listener *listener : listeners_) listener->onOperationFinished(result);
 }
 
@@ -319,8 +323,9 @@ void Controller::onOperationFinished(const OperationResult &result) {
         snapshot_ = {snapshot_.generation + 1, records_.data(), read.count,
                      read.truncated};
         for (Listener *listener : listeners_) listener->onScanChanged();
-      } else if (error == Status::kOk)
+      } else if (error == Status::kOk) {
         error = Status::kCorrupt;
+      }
     } else if (result.kind == OperationKind::kEnable) {
       error = store_.writeEnabled(enabled_);
       startup = error == Status::kOk && enabled_;
@@ -342,13 +347,15 @@ void Controller::onEnabledChanged(bool enabled) {
 void Controller::onLinkChanged(const LinkState &state) {
   if (closed_ || faulted_) return;
   if (state.connection_id != link_.connection_id &&
-      state.connection_id != station_.result.id)
+      state.connection_id != station_.result.id) {
     return;
+  }
   link_ = state;
   for (Listener *listener : listeners_) listener->onLinkChanged(state);
   if (state.phase == LinkPhase::kIdle && reconnect_profile_ &&
-      !station_.result.id)
+      !station_.result.id) {
     reconnect_.scheduleAfter(roo_time::Seconds(1));
+  }
 }
 
 void Controller::startProfile() {

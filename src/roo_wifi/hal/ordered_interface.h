@@ -153,12 +153,18 @@ class OrderedInterface : public Interface, private NativeStation::Receiver {
   std::unique_ptr<roo_scheduler::SingletonTask> dispatch_;
   roo::mutex mutex_;
   std::array<NativeStation::Event, 16> queue_;
-  size_t head_ = 0, count_ = 0;
-  bool overflow_ = false, attached_ = false, faulted_ = false, enabled_ = false;
-  bool cancelling_ = false, scan_cancelling_ = false,
-       waiting_disconnect_ = false;
+  size_t head_ = 0;
+  size_t count_ = 0;
+  bool overflow_ = false;
+  bool attached_ = false;
+  bool faulted_ = false;
+  bool enabled_ = false;
+  bool cancelling_ = false;
+  bool scan_cancelling_ = false;
+  bool waiting_disconnect_ = false;
   bool desired_enabled_ = false;
-  OperationResult station_, scan_;
+  OperationResult station_;
+  OperationResult scan_;
   LinkState link_;
   ConnectionConfig config_;
   Credentials credentials_;

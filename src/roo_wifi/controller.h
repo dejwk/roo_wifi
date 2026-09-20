@@ -136,7 +136,9 @@ class Controller : private Interface::Sink {
  private:
   struct Slot {
     OperationResult result;
-    bool started = false, cancelled = false, timed_out = false;
+    bool started = false;
+    bool cancelled = false;
+    bool timed_out = false;
     roo_time::Uptime deadline;
   };
 
@@ -156,20 +158,27 @@ class Controller : private Interface::Sink {
   Store &store_;
   roo_scheduler::Scheduler &scheduler_;
   ControllerOptions options_;
-  roo_scheduler::SingletonTask work_, timer_, reconnect_;
+  roo_scheduler::SingletonTask work_;
+  roo_scheduler::SingletonTask timer_;
+  roo_scheduler::SingletonTask reconnect_;
   std::vector<Listener *> listeners_;
   std::vector<ScanRecord> records_;
   ScanSnapshot snapshot_;
   LinkState link_;
-  Slot station_, scan_, write_;
+  Slot station_;
+  Slot scan_;
+  Slot write_;
   ConnectionConfig config_;
   Credentials credentials_;
   ProfileSettings settings_;
   CredentialUpdate update_;
   OperationId next_id_ = 1;
   ProfileId reconnect_profile_ = 0;
-  bool started_ = false, closed_ = false, enabled_ = false;
-  bool faulted_ = false, desired_enabled_ = false;
+  bool started_ = false;
+  bool closed_ = false;
+  bool enabled_ = false;
+  bool faulted_ = false;
+  bool desired_enabled_ = false;
 };
 
 }  // namespace roo_wifi

@@ -109,13 +109,15 @@ Status Esp32Station::attach(Receiver &receiver) {
   receiver_ = &receiver;
   error = esp_event_handler_instance_register(WIFI_EVENT, ESP_EVENT_ANY_ID,
                                               &Dispatch, this, &wifi_handler_);
-  if (error == ESP_OK)
+  if (error == ESP_OK) {
     error = esp_event_handler_instance_register(IP_EVENT, ESP_EVENT_ANY_ID,
                                                 &Dispatch, this, &ip_handler_);
+  }
   if (error != ESP_OK) {
-    if (wifi_handler_)
+    if (wifi_handler_) {
       esp_event_handler_instance_unregister(WIFI_EVENT, ESP_EVENT_ANY_ID,
                                             wifi_handler_);
+    }
     wifi_handler_ = nullptr;
     receiver_ = nullptr;
     return Status::kConnectionFailed;
@@ -127,12 +129,14 @@ Status Esp32Station::attach(Receiver &receiver) {
 void Esp32Station::detach() {
   roo::lock_guard<roo::mutex> owner_lock(owner_mutex);
   if (owner != this) return;
-  if (wifi_handler_)
+  if (wifi_handler_) {
     esp_event_handler_instance_unregister(WIFI_EVENT, ESP_EVENT_ANY_ID,
                                           wifi_handler_);
-  if (ip_handler_)
+  }
+  if (ip_handler_) {
     esp_event_handler_instance_unregister(IP_EVENT, ESP_EVENT_ANY_ID,
                                           ip_handler_);
+  }
   roo::unique_lock<roo::mutex> lock(mutex_);
   receiver_ = nullptr;
   wifi_handler_ = ip_handler_ = nullptr;
@@ -146,8 +150,9 @@ void Esp32Station::detach() {
 Support Esp32Station::support() const {
   Support s;
   for (AuthMode mode : {AuthMode::kOpen, AuthMode::kWep, AuthMode::kWpaPersonal,
-                        AuthMode::kWpa2Personal, AuthMode::kWpaWpa2Personal})
+                        AuthMode::kWpa2Personal, AuthMode::kWpaWpa2Personal}) {
     s.authentication_modes |= 1u << static_cast<unsigned>(mode);
+  }
 #if (defined(CONFIG_ESP_WIFI_ENABLE_WPA3_SAE) &&   \
      CONFIG_ESP_WIFI_ENABLE_WPA3_SAE) ||           \
     (defined(CONFIG_ESP32_WIFI_ENABLE_WPA3_SAE) && \
@@ -283,7 +288,8 @@ Status Esp32Station::startSelected(const wifi_ap_record_t &ap) {
   if (status != ESP_OK && status != ESP_ERR_ESP_NETIF_DHCP_ALREADY_STOPPED)
     return Status::kConnectionFailed;
   esp_netif_ip_info_t ip = {};
-  esp_netif_dns_info_t dns1 = {}, dns2 = {};
+  esp_netif_dns_info_t dns1 = {};
+  esp_netif_dns_info_t dns2 = {};
   dns1.ip.type = dns2.ip.type = ESP_IPADDR_TYPE_V4;
   if (config_.ip_mode == IpMode::kStaticIpv4) {
     const StaticIpv4 &settings = config_.static_ipv4;
@@ -298,8 +304,9 @@ Status Esp32Station::startSelected(const wifi_ap_record_t &ap) {
   }
   if (esp_netif_set_ip_info(netif, &ip) != ESP_OK ||
       esp_netif_set_dns_info(netif, ESP_NETIF_DNS_MAIN, &dns1) != ESP_OK ||
-      esp_netif_set_dns_info(netif, ESP_NETIF_DNS_BACKUP, &dns2) != ESP_OK)
+      esp_netif_set_dns_info(netif, ESP_NETIF_DNS_BACKUP, &dns2) != ESP_OK) {
     return Status::kConnectionFailed;
+  }
   if (config_.ip_mode == IpMode::kDhcp) {
     status = esp_netif_dhcpc_start(netif);
     if (status != ESP_OK && status != ESP_ERR_ESP_NETIF_DHCP_ALREADY_STARTED)
@@ -428,8 +435,9 @@ void Esp32Station::event(esp_event_base_t base, int32_t id, void *data) {
         esp_netif_get_ip_info(info.esp_netif, &current_ip) != ESP_OK ||
         current_ip.ip.addr == 0 || current_ip.ip.addr == 0xffffffffu ||
         current_ip.ip.addr != info.ip_info.ip.addr ||
-        memcmp(current_ap.bssid, selected_.bssid, 6) != 0)
+        memcmp(current_ap.bssid, selected_.bssid, 6) != 0) {
       return;
+    }
     event.link.ssid = Record(current_ap).ssid;
     memcpy(event.link.bssid.bytes, current_ap.bssid, 6);
     event.kind = Event::kAddressReady;
@@ -445,8 +453,9 @@ void Esp32Station::event(esp_event_base_t base, int32_t id, void *data) {
     // a newly acquired address merely because an old loss timer expired.
     if (uint32_t(WiFi.localIP()) != 0) return;
     event.kind = Event::kAddressLost;
-  } else
+  } else {
     return;
+  }
   receiver_->post(event);
 }
 }  // namespace roo_wifi

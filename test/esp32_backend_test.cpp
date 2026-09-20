@@ -102,7 +102,8 @@ TEST(Esp32BackendTest, SecuritySelectionAndSwitch) {
 TEST(Esp32BackendTest, ExclusiveOwnership) {
   roo_scheduler::Scheduler scheduler;
   Esp32ArduinoInterface a, b;
-  MemoryStore sa, sb;
+  MemoryStore sa;
+  MemoryStore sb;
   Controller first(a, sa, scheduler), second(b, sb, scheduler);
   EXPECT_EQ(first.begin(), Status::kOk);
   EXPECT_EQ(second.begin(), Status::kBusy);

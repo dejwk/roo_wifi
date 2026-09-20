@@ -5,7 +5,9 @@
 
 namespace roo_wifi {
 namespace {
-constexpr uint8_t kIncomplete = 0x10, kReady = 0x11, kDeleted = 0x12;
+constexpr uint8_t kIncomplete = 0x10;
+constexpr uint8_t kReady = 0x11;
+constexpr uint8_t kDeleted = 0x12;
 constexpr const char *kFields[] = {
     "ssid", "auth",   "hidden",  "ip",  "addr", "gw",  "dns1",
     "dns2", "prefix", "dns2set", "mac", "auto", "enc", "secret"};
@@ -184,8 +186,9 @@ SaveResult FieldStore::saveProfile(ProfileId id,
   if (!id) return {Status::kInvalidArgument, 0};
   Credentials secret;
   if (settings.connection.security == AuthMode::kOpen &&
-      (update.intent != CredentialIntent::kClear || update.replacement.size))
+      (update.intent != CredentialIntent::kClear || update.replacement.size)) {
     return {Status::kInvalidArgument, id};
+  }
   switch (update.intent) {
     case CredentialIntent::kKeep: {
       Status error = loadCredentials(id, secret);
@@ -225,9 +228,10 @@ SaveResult FieldStore::saveProfile(ProfileId id,
   error = read(id, stored, stored_secret);
   if (error != Status::kOk) return {Status::kCommitUnknown, id};
   for (size_t f = 0; f < 14; ++f) {
-    uint8_t expected[64], actual[64];
-    size_t a = Encode(f, settings, secret, expected),
-           b = Encode(f, stored, stored_secret, actual);
+    uint8_t expected[64];
+    uint8_t actual[64];
+    size_t a = Encode(f, settings, secret, expected);
+    size_t b = Encode(f, stored, stored_secret, actual);
     if (a != b || memcmp(expected, actual, a))
       return {Status::kCommitUnknown, id};
   }
