@@ -90,7 +90,4 @@ class Esp32IdfInterface : private Esp32Station, public OrderedInterface {
   ~Esp32IdfInterface() override { OrderedInterface::shutdown(); }
 };
 
-/// Compatibility name for the former Arduino Wi-Fi adapter.
-using Esp32ArduinoInterface = Esp32IdfInterface;
-
 }  // namespace roo_wifi

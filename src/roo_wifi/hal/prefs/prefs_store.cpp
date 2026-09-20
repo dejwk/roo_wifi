@@ -1,11 +1,11 @@
-#include "roo_wifi/hal/esp32/arduino_preferences_store.h"
+#include "roo_wifi/hal/prefs/prefs_store.h"
 
 #include <cstring>
 
 namespace roo_wifi {
 namespace {
 
-/// Maps a Preferences read outcome to its portable equivalent.
+/// Maps a roo_prefs read outcome to its portable equivalent.
 Status Read(roo_prefs::ReadResult result) {
   switch (result) {
     case roo_prefs::ReadResult::kOk:
@@ -39,14 +39,14 @@ void LegacyKey(const Ssid &ssid, char (&out)[16]) {
 
 }  // namespace
 
-ArduinoPreferencesStore::ArduinoPreferencesStore() : collection_("roo/wifi") {}
+PrefsStore::PrefsStore() : collection_("roo/wifi") {}
 
-Status ArduinoPreferencesStore::begin() {
+Status PrefsStore::begin() {
   roo_prefs::Transaction transaction(collection_);
   return transaction.active() ? Status::kOk : Status::kStorageFailure;
 }
 
-Status ArduinoPreferencesStore::readEnabled(bool &out) const {
+Status PrefsStore::readEnabled(bool &out) const {
   roo_prefs::Transaction t(collection_,
                            roo_prefs::Transaction::Mode::kReadOnly);
   if (!t.active()) return Status::kStorageFailure;
@@ -56,7 +56,7 @@ Status ArduinoPreferencesStore::readEnabled(bool &out) const {
   return status;
 }
 
-Status ArduinoPreferencesStore::writeEnabled(bool enabled) {
+Status PrefsStore::writeEnabled(bool enabled) {
   roo_prefs::Transaction t(collection_);
   if (!t.active()) return Status::kStorageFailure;
   return t.store().writeBool("enabled", enabled) == roo_prefs::WriteResult::kOk
@@ -64,8 +64,8 @@ Status ArduinoPreferencesStore::writeEnabled(bool enabled) {
              : Status::kStorageFailure;
 }
 
-Status ArduinoPreferencesStore::readField(const char *key, uint8_t *out,
-                                          size_t &size) const {
+Status PrefsStore::readField(const char *key, uint8_t *out,
+                             size_t &size) const {
   roo_prefs::Transaction t(collection_,
                            roo_prefs::Transaction::Mode::kReadOnly);
   if (!t.active()) return Status::kStorageFailure;
@@ -75,8 +75,8 @@ Status ArduinoPreferencesStore::readField(const char *key, uint8_t *out,
   return status;
 }
 
-Status ArduinoPreferencesStore::writeField(const char *key, const uint8_t *data,
-                                           size_t size) {
+Status PrefsStore::writeField(const char *key, const uint8_t *data,
+                              size_t size) {
   roo_prefs::Transaction t(collection_);
   if (!t.active()) return Status::kStorageFailure;
   return t.store().writeBytes(key, data, size) == roo_prefs::WriteResult::kOk
@@ -84,7 +84,7 @@ Status ArduinoPreferencesStore::writeField(const char *key, const uint8_t *data,
              : Status::kStorageFailure;
 }
 
-Status ArduinoPreferencesStore::eraseField(const char *key) {
+Status PrefsStore::eraseField(const char *key) {
   roo_prefs::Transaction t(collection_);
   if (!t.active()) return Status::kStorageFailure;
   if (!t.store().isKey(key)) return Status::kOk;
@@ -93,8 +93,7 @@ Status ArduinoPreferencesStore::eraseField(const char *key) {
              : Status::kStorageFailure;
 }
 
-Status ArduinoPreferencesStore::importLegacy(ProfileId id,
-                                             const ProfileSettings &settings) {
+Status PrefsStore::importLegacy(ProfileId id, const ProfileSettings &settings) {
   const Ssid &ssid = settings.connection.ssid;
   if (ssid.size == 0 || ssid.size > 32 ||
       memchr(ssid.bytes, 0, ssid.size) != nullptr)
@@ -123,7 +122,7 @@ Status ArduinoPreferencesStore::importLegacy(ProfileId id,
   return saveProfile(id, settings, update);
 }
 
-Status ArduinoPreferencesStore::readLegacyDefault(Ssid &out) const {
+Status PrefsStore::readLegacyDefault(Ssid &out) const {
   roo_prefs::Transaction t(collection_,
                            roo_prefs::Transaction::Mode::kReadOnly);
   if (!t.active()) return Status::kStorageFailure;

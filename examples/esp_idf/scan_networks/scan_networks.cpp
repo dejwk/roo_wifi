@@ -12,7 +12,7 @@
 #include "freertos/task.h"
 #include "nvs_flash.h"
 #include "roo_scheduler.h"
-#include "roo_wifi/esp32.h"
+#include "roo_wifi.h"
 
 namespace {
 
@@ -49,16 +49,15 @@ struct Emulator {
 } emulator;
 #endif
 
-class ScanListener : public roo_wifi::Controller::Listener {
+class ScanListener : public roo_wifi::Listener {
  public:
-  explicit ScanListener(roo_wifi::Controller& controller)
-      : controller_(controller) {}
+  explicit ScanListener(roo_wifi::WiFi& wifi) : wifi_(wifi) {}
 
   void onOperationFinished(const roo_wifi::OperationResult& result) override {
     if (result.kind != roo_wifi::OperationKind::kEnable) {
       return;
     }
-    if (controller_.isEnabled()) {
+    if (wifi_.isEnabled()) {
       StartScan();
       return;
     }
@@ -66,14 +65,13 @@ class ScanListener : public roo_wifi::Controller::Listener {
       return;
     }
     enable_requested_ = true;
-    if (controller_.setEnabled(true).id == 0) {
+    if (wifi_.setEnabled(true).id == 0) {
       std::printf("Could not enable the Wi-Fi station\n");
     }
   }
 
   void onScanChanged() override {
-    const roo_wifi::Controller::ScanSnapshot snapshot =
-        controller_.scanSnapshot();
+    const roo_wifi::ScanSnapshot snapshot = wifi_.scanSnapshot();
     std::printf("Found %u%s networks\n", static_cast<unsigned>(snapshot.count),
                 snapshot.truncated ? "+" : "");
     for (size_t index = 0; index < snapshot.count; ++index) {
@@ -89,21 +87,21 @@ class ScanListener : public roo_wifi::Controller::Listener {
     if (scan_requested_) {
       return;
     }
-    const roo_wifi::Controller::RequestResult request = controller_.scan();
+    const roo_wifi::RequestResult request = wifi_.scan();
     if (request.id == 0) {
       std::printf("Could not start the network scan\n");
       return;
     }
     scan_requested_ = true;
   }
-  roo_wifi::Controller& controller_;
+  roo_wifi::WiFi& wifi_;
   bool enable_requested_ = false;
   bool scan_requested_ = false;
 };
 
 roo_scheduler::Scheduler scheduler;
-roo_wifi::Esp32Wifi wifi(scheduler);
-ScanListener listener(wifi.controller());
+roo_wifi::WiFi wifi(scheduler);
+ScanListener listener(wifi);
 
 }  // namespace
 
@@ -114,8 +112,8 @@ extern "C" void app_main() {
     return;
   }
 
-  wifi.controller().addListener(listener);
-  if (wifi.controller().begin() != roo_wifi::Status::kOk) {
+  wifi.addListener(listener);
+  if (wifi.begin() != roo_wifi::Status::kOk) {
     std::printf("Could not initialize roo_wifi\n");
     return;
   }

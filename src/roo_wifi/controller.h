@@ -259,4 +259,8 @@ class Controller : private Interface::Sink {
   bool desired_enabled_ = false;
 };
 
+using Listener = Controller::Listener;
+using RequestResult = Controller::RequestResult;
+using ScanSnapshot = Controller::ScanSnapshot;
+
 }  // namespace roo_wifi

@@ -1,6 +1,6 @@
 {
     "name": "roo_wifi",
-    "description": "Portable Wi-Fi operations and known-key profiles, with an ESP32 Arduino adapter.",
+    "description": "Portable Wi-Fi operations and known-key profiles, with an ESP32 ESP-IDF adapter.",
     "keywords": [
         "WiFi"
     ],
@@ -18,7 +18,8 @@
     "version": "2.0.0",
     "homepage": "https://github.com/dejwk/roo_wifi",
     "frameworks": [
-        "Arduino"
+        "Arduino",
+        "espidf"
     ],
     "platforms": [
         "espressif32"

@@ -1,13 +1,19 @@
+#include <type_traits>
+
 #include "backend_fakes.h"
 #include "esp_netif.h"
 #include "gtest/gtest.h"
 #include "roo_testing/microcontrollers/esp32/fake_esp32.h"
 #include "roo_testing/transducers/wifi/wifi.h"
-#include "roo_wifi/hal/esp32/arduino_preferences_store.h"
-#include "roo_wifi/hal/esp32/esp32_arduino_interface.h"
+#include "roo_wifi.h"
+#include "roo_wifi/hal/esp32/idf_interface.h"
+#include "roo_wifi/hal/prefs/prefs_store.h"
 
 namespace roo_wifi {
 namespace {
+static_assert(std::is_same<WiFi, Esp32WiFi>::value,
+              "ESP32 builds select Esp32WiFi as roo_wifi::WiFi");
+
 esp_ip4_addr_t Ip(uint8_t a, uint8_t b, uint8_t c, uint8_t d) {
   esp_ip4_addr_t result = {};
   result.addr = static_cast<uint32_t>(a) | (static_cast<uint32_t>(b) << 8) |
@@ -119,14 +125,14 @@ TEST(Esp32BackendTest, ExclusiveOwnership) {
 
 // Verifies actual preferences survive close/reopen with small known-key fields.
 TEST(Esp32BackendTest, PreferencesReopen) {
-  ArduinoPreferencesStore store;
+  PrefsStore store;
   ASSERT_EQ(store.begin(), Status::kOk);
   ProfileSettings settings;
   settings.connection = TestConfig("persisted");
   CredentialUpdate update;
   update.intent = CredentialIntent::kClear;
   ASSERT_EQ(store.saveProfile(0x1234, settings, update), Status::kOk);
-  ArduinoPreferencesStore reopened;
+  PrefsStore reopened;
   ASSERT_EQ(reopened.begin(), Status::kOk);
   Profile out;
   ASSERT_EQ(reopened.loadProfile(0x1234, out), Status::kOk);

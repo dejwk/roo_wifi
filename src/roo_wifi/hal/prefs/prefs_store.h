@@ -4,20 +4,20 @@
 
 namespace roo_wifi {
 
-/// Stores known-key Wi-Fi profiles in Arduino Preferences.
-class ArduinoPreferencesStore : public FieldStore {
+/// Stores known-key Wi-Fi profiles through the roo_prefs backend.
+class PrefsStore : public FieldStore {
  public:
-  /// Creates a Preferences-backed profile store.
-  ArduinoPreferencesStore();
+  /// Creates a roo_prefs-backed profile store.
+  PrefsStore();
 
-  /// Opens the Preferences collection for subsequent operations.
+  /// Opens the roo_prefs collection for subsequent operations.
   Status begin() override;
 
-  /// Reads persisted radio enablement from Preferences.
+  /// Reads persisted radio enablement from roo_prefs.
   /// @param enabled Receives the stored value on success.
   Status readEnabled(bool &enabled) const override;
 
-  /// Persists radio enablement in Preferences.
+  /// Persists radio enablement through roo_prefs.
   /// @param enabled Value to persist.
   Status writeEnabled(bool enabled) override;
 

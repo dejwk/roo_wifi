@@ -2,10 +2,13 @@
 Wi-Fi controller library for ESP32, supporting persistent configuration in flash
 and a portable controller API. Its radio adapter uses ESP-IDF directly.
 
-## Arduino use
+## ESP32 use
 
-The library targets ESP32 Arduino projects. Construct the controller once, call
-`begin()` from `setup()`, and run the scheduler from `loop()`:
+The ESP32 adapter uses ESP-IDF directly and works in both Arduino-ESP32
+sketches and native ESP-IDF applications. Construct the controller once, call
+`begin()` from the application startup path, and run the scheduler regularly.
+
+In an Arduino sketch:
 
 ```cpp
 #include <Arduino.h>
@@ -13,11 +16,10 @@ The library targets ESP32 Arduino projects. Construct the controller once, call
 #include <roo_wifi.h>
 
 roo_scheduler::Scheduler scheduler;
-roo_wifi::Wifi wifi(scheduler);
+roo_wifi::WiFi wifi(scheduler);
 
 void setup() {
   wifi.begin();
-  if (!wifi.isEnabled()) wifi.toggleEnabled();
 }
 
 void loop() {
@@ -25,13 +27,15 @@ void loop() {
 }
 ```
 
-Use `connect(ssid, password)` to select a network and `forget(ssid)` to remove
-the selected network and its saved credentials.
+Register a `roo_wifi::Listener` before `begin()` to observe deferred
+enablement, scan, connection, and profile-operation results. The runnable scan
+examples show how to enable the station and request a scan once the preceding
+enable operation has completed.
 
-The same radio adapter can be used from a raw ESP-IDF application. It creates
-the default event loop, station netif, and Wi-Fi driver only when they have not
-already been initialized; applications must still leave the station exclusively
-owned by `roo_wifi`.
+In a raw ESP-IDF application, initialize the default NVS partition before
+constructing `WiFi`; the adapter creates the default event loop, station
+netif, and Wi-Fi driver only when they are not already initialized. In either
+environment, leave the physical station exclusively owned by `roo_wifi`.
 
 ## Host emulation
 

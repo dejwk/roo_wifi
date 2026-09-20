@@ -39,8 +39,8 @@ physical enablement separately from its operation's persistence result. A
 connection succeeds at AddressReady, not association or internet reachability.
 
 For ESP32, include `roo_wifi/esp32.h`, construct
-`roo_wifi::Esp32Wifi station(scheduler, options)`, then use
-`station.controller().begin()` and its portable controller for every operation.
+`roo_wifi::Esp32WiFi station(scheduler, options)`, then use
+`station.begin()` and its inherited controller API for every operation.
 There is only one owner of the process-global physical station.
 
 Use `scan()` and `scanSnapshot()` instead of SSID-keyed network summaries.
@@ -67,7 +67,7 @@ honors that profile's `auto_connect` setting.
 An incomplete save requires replacement with complete input, never Keep.
 `CommitUnknown` requires rereading before assuming success. Deleted profiles
 remain absent even if physical field cleanup failed; retry deletion to clean up.
-`ArduinoPreferencesStore::importLegacy(key, settings)` explicitly imports only
+`PrefsStore::importLegacy(key, settings)` explicitly imports only
 the supplied SSID's hashed legacy password. It never infers authentication from
 password presence or automatically migrates scans; old preferences remain.
 

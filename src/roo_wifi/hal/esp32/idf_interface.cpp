@@ -1,4 +1,4 @@
-#include "roo_wifi/hal/esp32/esp32_arduino_interface.h"
+#include "roo_wifi/hal/esp32/idf_interface.h"
 
 #include <algorithm>
 #include <cstring>

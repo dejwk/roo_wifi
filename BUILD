@@ -4,7 +4,11 @@ load("@rules_cc//cc:cc_test.bzl", "cc_test")
 cc_library(
     name = "roo_wifi",
     srcs = glob(["src/roo_wifi/*.cpp", "src/roo_wifi/hal/*.cpp"]),
-    hdrs = glob(["src/**/*.h"], exclude = ["src/roo_wifi/hal/esp32/**", "src/roo_wifi/esp32.h"]),
+    hdrs = glob(["src/**/*.h"], exclude = [
+        "src/roo_wifi/hal/esp32/**",
+        "src/roo_wifi/hal/prefs/**",
+        "src/roo_wifi/esp32.h",
+    ]),
     includes = ["src"],
     visibility = ["//visibility:public"],
     deps = ["@roo_collections", "@roo_backport", "@roo_scheduler"],
@@ -12,8 +16,14 @@ cc_library(
 
 cc_library(
     name = "esp32",
-    srcs = glob(["src/roo_wifi/hal/esp32/*.cpp"]),
-    hdrs = glob(["src/roo_wifi/hal/esp32/*.h"]) + ["src/roo_wifi/esp32.h"],
+    srcs = glob([
+        "src/roo_wifi/hal/esp32/*.cpp",
+        "src/roo_wifi/hal/prefs/*.cpp",
+    ]),
+    hdrs = glob([
+        "src/roo_wifi/hal/esp32/*.h",
+        "src/roo_wifi/hal/prefs/*.h",
+    ]) + ["src/roo_wifi/esp32.h"],
     includes = ["src"],
     visibility = ["//visibility:public"],
     deps = [":roo_wifi", "@roo_prefs", "@roo_testing//roo_testing/frameworks/esp-idf:core"],

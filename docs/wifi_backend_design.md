@@ -32,7 +32,7 @@ scan model primarily exposes SSID, open/secured state, and RSSI; the HAL already
 has richer AP authentication and radio metadata. The legacy store persists
 radio enablement, default SSID, and passwords rather than enumerable profiles.
 
-The [ESP32 adapter](../src/roo_wifi/hal/esp32/esp32_arduino_interface.h) uses
+The [ESP32 adapter](../src/roo_wifi/hal/esp32/idf_interface.h) uses
 ESP-IDF Wi-Fi and process-global station events. The [umbrella header](../src/roo_wifi.h)
 conditionally exposes an ESP32 convenience controller, but the current
 [build target](../BUILD) includes both core and platform implementation with an
@@ -43,7 +43,7 @@ The current [roo_prefs storage API](../../roo_prefs/src/roo_prefs/store/preferen
 provides named-key reads/writes, blobs, and explicit status codes, but no key
 iteration. Its [Transaction](../../roo_prefs/src/roo_prefs/transaction.h) opens
 and closes collection access; it is not an atomic multi-key commit. The current
-[Wi-Fi preferences adapter](../src/roo_wifi/hal/esp32/arduino_preferences_store.cpp)
+[Wi-Fi preferences adapter](../src/roo_wifi/hal/prefs/prefs_store.cpp)
 stores passwords under hashes of SSIDs and stores only the default SSID in
 recoverable text. This constrains both enumeration and legacy migration.
 

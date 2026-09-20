@@ -5,7 +5,7 @@ portable construction, fixed-size SSID/credential values, typed operation IDs
 and results, bounded scans, exact authentication requirements, ordered native
 lifecycle handling, known-key profiles and explicit credential intent.
 
-ESP32 construction now uses `roo_wifi/esp32.h` and `Esp32Wifi::controller()`.
+ESP32 construction now uses `roo_wifi/esp32.h` and `Esp32WiFi::controller()`.
 Bazel native consumers depend on `:esp32`. See `docs/backend_migration.md` for
 headless provisioning, temporary connections, and caller migration. See
 `docs/backend_validation.md` for tested behavior and hardware/release gates.
@@ -107,4 +107,3 @@ Published 2024-08-06.
 Initial release.
 
 ---
-
