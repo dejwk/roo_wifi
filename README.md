@@ -45,6 +45,11 @@ or newer, a plain command defaults to that profile and prints a notice:
 The files under .roo_testing/bazelrc/esp32 are vendored from roo_testing;
 follow their canonical-source headers when refreshing them.
 
+## Examples
+
+Runnable Arduino and native ESP-IDF scan examples are in
+[examples](examples/README.md).
+
 ## Design
 
 The proposed [Wi-Fi backend foundation](docs/wifi_backend_design.md) defines the
