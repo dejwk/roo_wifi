@@ -10,6 +10,7 @@ class Scheduler;
 }
 
 namespace roo_wifi {
+
 /// Adapts a platform radio to the controller's asynchronous operation model.
 /// All sink delivery is deferred and serialized on the supplied scheduler.
 /// begin must not emit callbacks. Commands copy their inputs and

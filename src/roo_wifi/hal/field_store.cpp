@@ -5,6 +5,7 @@
 
 namespace roo_wifi {
 namespace {
+
 constexpr uint8_t kIncomplete = 0x10;
 constexpr uint8_t kReady = 0x11;
 constexpr uint8_t kDeleted = 0x12;
@@ -122,6 +123,7 @@ Status Decode(size_t f, const uint8_t *data, size_t n, ProfileSettings &s,
   }
   return Status::kOk;
 }
+
 }  // namespace
 
 Status FieldStore::readStatus(ProfileId id) const {
@@ -197,14 +199,17 @@ Status FieldStore::saveProfile(ProfileId id, const ProfileSettings &settings,
       if (status != Status::kOk) return status;
       break;
     }
-    case CredentialIntent::kReplace:
+    case CredentialIntent::kReplace: {
       secret = update.replacement;
       break;
-    case CredentialIntent::kClear:
+    }
+    case CredentialIntent::kClear: {
       if (update.replacement.size != 0) return Status::kInvalidArgument;
       break;
-    default:
+    }
+    default: {
       return Status::kInvalidArgument;
+    }
   }
   Status status = Validate(settings.connection, secret);
   if (status != Status::kOk) return status;
@@ -253,4 +258,5 @@ Status FieldStore::removeProfile(ProfileId id) {
   }
   return result;
 }
+
 }  // namespace roo_wifi

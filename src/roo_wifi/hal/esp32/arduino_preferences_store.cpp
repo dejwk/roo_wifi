@@ -4,6 +4,7 @@
 
 namespace roo_wifi {
 namespace {
+
 /// Maps a Preferences read outcome to its portable equivalent.
 Status Read(roo_prefs::ReadResult result) {
   switch (result) {
@@ -35,6 +36,7 @@ void LegacyKey(const Ssid &ssid, char (&out)[16]) {
   }
   out[14] = 0;
 }
+
 }  // namespace
 
 ArduinoPreferencesStore::ArduinoPreferencesStore() : collection_("roo/wifi") {}
@@ -135,4 +137,5 @@ Status ArduinoPreferencesStore::readLegacyDefault(Ssid &out) const {
   out = result;
   return Status::kOk;
 }
+
 }  // namespace roo_wifi

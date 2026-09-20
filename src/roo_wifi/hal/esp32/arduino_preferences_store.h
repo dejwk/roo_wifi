@@ -3,6 +3,7 @@
 #include "roo_wifi/hal/field_store.h"
 
 namespace roo_wifi {
+
 /// Stores known-key Wi-Fi profiles in Arduino Preferences.
 class ArduinoPreferencesStore : public FieldStore {
  public:
@@ -38,4 +39,5 @@ class ArduinoPreferencesStore : public FieldStore {
  private:
   mutable roo_prefs::Collection collection_;
 };
+
 }  // namespace roo_wifi

@@ -9,6 +9,7 @@
 
 namespace roo_wifi {
 namespace {
+
 roo::mutex owner_mutex;
 Esp32Station *owner = nullptr;
 
@@ -99,6 +100,7 @@ IPAddress Address(const Ipv4Address &ip) {
 Status Result(esp_err_t code) {
   return code == ESP_OK ? Status::kOk : Status::kConnectionFailed;
 }
+
 }  // namespace
 
 Esp32Station::~Esp32Station() { detach(); }
@@ -469,4 +471,5 @@ void Esp32Station::event(esp_event_base_t base, int32_t id, void *data) {
   }
   receiver_->post(event);
 }
+
 }  // namespace roo_wifi

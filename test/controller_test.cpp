@@ -301,6 +301,25 @@ TEST(TimeoutTest, UnsettledNativeWorkCannotOverlapNewAttempt) {
   controller.removeListener(observer);
 }
 
+// Verifies timeout monitoring sleeps until the pending operation's deadline.
+TEST(TimeoutTest, MonitorsAtDeadlineRatherThanPolling) {
+  roo_scheduler::Scheduler scheduler;
+  TestStation native;
+  OrderedInterface radio(native);
+  MemoryStore store;
+  store.enabled = true;
+  Controller::Options options;
+  options.connect_timeout_ms = 1000;
+  Controller controller(radio, store, scheduler, options);
+  controller.begin();
+  Pump(scheduler);
+
+  ASSERT_NE(controller.connect(TestConfig(), {}).id, 0u);
+  Pump(scheduler);
+
+  EXPECT_GT(scheduler.getNearestExecutionDelay(), roo_time::Millis(500));
+}
+
 // Verifies disabled provisioning, startup selection, and owned profile input.
 TEST(StartupTest, KnownProfileAndAdmissionSnapshot) {
   roo_scheduler::Scheduler scheduler;

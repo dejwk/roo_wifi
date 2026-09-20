@@ -286,9 +286,7 @@ void Controller::execute() {
                            : options_.transition_timeout_ms;
     slot->deadline = roo_time::Uptime::Now() + roo_time::Millis(timeout);
   }
-  if (station_.result.id != 0 || scan_.result.id != 0) {
-    timer_.scheduleAfter(roo_time::Millis(1));
-  }
+  scheduleTimeoutCheck();
 }
 
 void Controller::checkTimeouts() {
@@ -310,23 +308,39 @@ void Controller::checkTimeouts() {
       interface_.cancel(slot->result.id);
     }
   }
-  if (station_.result.id != 0 || scan_.result.id != 0) {
-    timer_.scheduleAfter(roo_time::Millis(1));
+  scheduleTimeoutCheck();
+}
+
+void Controller::scheduleTimeoutCheck() {
+  roo_time::Uptime deadline = roo_time::Uptime::Max();
+  for (Slot* slot : {&station_, &scan_}) {
+    if (slot->result.id != 0 && slot->state != Slot::State::kQueued &&
+        slot->state != Slot::State::kCancelledBeforeStart &&
+        slot->deadline < deadline) {
+      deadline = slot->deadline;
+    }
+  }
+  if (deadline == roo_time::Uptime::Max()) {
+    timer_.cancel();
+  } else {
+    timer_.scheduleOn(deadline);
   }
 }
 
-void Controller::finish(Slot& slot, Status error, int32_t native,
+void Controller::finish(Slot& slot, Status status, int32_t native,
                         bool has_native) {
   OperationResult result = slot.result;
   result.status =
-      slot.state == Slot::State::kTimingOut ? Status::kTimeout : error;
+      slot.state == Slot::State::kTimingOut ? Status::kTimeout : status;
   result.native_code = native;
   result.has_native_code = has_native;
   slot = {};
-  if (result.kind == OperationKind::kConnect && result.status != Status::kOk)
+  if (result.kind == OperationKind::kConnect && result.status != Status::kOk) {
     reconnect_profile_ = 0;
-  if (result.kind == OperationKind::kScan)
+  }
+  if (result.kind == OperationKind::kScan) {
     for (Listener* listener : listeners_) listener->onScanStateChanged(false);
+  }
   if (result.kind == OperationKind::kSave ||
       result.kind == OperationKind::kRemove) {
     for (Listener* listener : listeners_) listener->onProfilesChanged();
@@ -337,8 +351,9 @@ void Controller::finish(Slot& slot, Status error, int32_t native,
 void Controller::onOperationFinished(const OperationResult& result) {
   Slot* slot = find(result.id);
   if (slot == nullptr || lifecycle_ == Lifecycle::kClosed ||
-      result.kind != slot->result.kind)
+      result.kind != slot->result.kind) {
     return;
+  }
   Status status = result.status;
   bool startup = false;
   if (status == Status::kOk && slot->state == Slot::State::kRunning) {

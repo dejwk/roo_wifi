@@ -4,6 +4,7 @@
 #include "roo_wifi/hal/ordered_interface.h"
 
 namespace roo_wifi {
+
 /// Drives the ESP32 station through Arduino and ESP-IDF APIs.
 class Esp32Station : public NativeStation {
  public:
@@ -89,4 +90,5 @@ class Esp32ArduinoInterface : private Esp32Station, public OrderedInterface {
   /// Shuts down ordered dispatch before destroying the station driver.
   ~Esp32ArduinoInterface() override { OrderedInterface::shutdown(); }
 };
+
 }  // namespace roo_wifi

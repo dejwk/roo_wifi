@@ -212,6 +212,9 @@ class Controller : private Interface::Sink {
   /// Cancels expired native operations and settles expired cancellations.
   void checkTimeouts();
 
+  /// Schedules timeout processing for the earliest active radio deadline.
+  void scheduleTimeoutCheck();
+
   /// Settles a slot and notifies listeners of its terminal result.
   void finish(Slot &, Status, int32_t = 0, bool = false);
 
