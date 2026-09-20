@@ -134,11 +134,19 @@ class Controller : private Interface::Sink {
   RequestResult removeProfile(ProfileId id);
 
  private:
+  enum class Lifecycle { kNew, kRunning, kClosed };
+
   struct Slot {
+    enum class State {
+      kQueued,
+      kCancelledBeforeStart,
+      kRunning,
+      kCancelling,
+      kTimingOut
+    };
+
     OperationResult result;
-    bool started = false;
-    bool cancelled = false;
-    bool timed_out = false;
+    State state = State::kQueued;
     roo_time::Uptime deadline;
   };
 
@@ -174,8 +182,7 @@ class Controller : private Interface::Sink {
   CredentialUpdate update_;
   OperationId next_id_ = 1;
   ProfileId reconnect_profile_ = 0;
-  bool started_ = false;
-  bool closed_ = false;
+  Lifecycle lifecycle_ = Lifecycle::kNew;
   bool enabled_ = false;
   bool faulted_ = false;
   bool desired_enabled_ = false;

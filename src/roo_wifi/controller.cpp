@@ -20,8 +20,8 @@ Controller::Controller(Interface &interface, Store &store,
 Controller::~Controller() { close(false); }
 
 Status Controller::begin() {
-  if (closed_) return Status::kNotStarted;
-  if (started_) return Status::kBusy;
+  if (lifecycle_ == Lifecycle::kClosed) return Status::kNotStarted;
+  if (lifecycle_ == Lifecycle::kRunning) return Status::kBusy;
   Status error = store_.begin();
   if (error != Status::kOk) return error;
   bool enabled = false;
@@ -29,17 +29,18 @@ Status Controller::begin() {
   if (error != Status::kOk && error != Status::kNotFound) return error;
   error = interface_.begin(*this, scheduler_);
   if (error != Status::kOk) return error;
-  started_ = true;
+  lifecycle_ = Lifecycle::kRunning;
   return setEnabled(enabled).error;
 }
 
 void Controller::close(bool notify) {
-  if (closed_) return;
-  closed_ = true;
+  if (lifecycle_ == Lifecycle::kClosed) return;
+  bool running = lifecycle_ == Lifecycle::kRunning;
+  lifecycle_ = Lifecycle::kClosed;
   work_.cancel();
   timer_.cancel();
   reconnect_.cancel();
-  if (started_) interface_.shutdown();
+  if (running) interface_.shutdown();
   if (notify) {
     for (Slot *slot : {&station_, &scan_, &write_})
       if (slot->result.id) finish(*slot, Status::kCancelled);
@@ -52,7 +53,6 @@ void Controller::close(bool notify) {
   snapshot_ = {};
   link_ = {};
   enabled_ = false;
-  started_ = false;
 }
 
 void Controller::shutdown() { close(true); }
@@ -80,20 +80,20 @@ ScanSnapshot Controller::scanSnapshot() const { return snapshot_; }
 LinkState Controller::linkState() const { return link_; }
 
 Status Controller::loadProfile(ProfileId id, Profile &out) const {
-  if (!started_ || closed_) return Status::kNotStarted;
+  if (lifecycle_ != Lifecycle::kRunning) return Status::kNotStarted;
   if (!id) return Status::kInvalidArgument;
   return store_.loadProfile(id, out);
 }
 
 Status Controller::radioAdmission() const {
-  if (!started_ || closed_) return Status::kNotStarted;
+  if (lifecycle_ != Lifecycle::kRunning) return Status::kNotStarted;
   if (faulted_) return Status::kNotStarted;
   return Status::kOk;
 }
 
 RequestResult Controller::admit(Slot &slot, OperationKind kind,
                                 ProfileId profile) {
-  if (!started_ || closed_) return {0, Status::kNotStarted};
+  if (lifecycle_ != Lifecycle::kRunning) return {0, Status::kNotStarted};
   if (slot.result.id) return {0, Status::kBusy};
   if (next_id_ == std::numeric_limits<OperationId>::max())
     return {0, Status::kBusy};
@@ -200,15 +200,20 @@ Controller::Slot *Controller::find(OperationId id) {
 Status Controller::cancel(OperationId id) {
   Slot *slot = find(id);
   if (!slot) return Status::kNotFound;
-  if (slot == &write_ && slot->started) return Status::kBusy;
-  if (slot->cancelled || slot->timed_out) return Status::kOk;
-  if (slot->started) {
+  if (slot == &write_ && slot->state != Slot::State::kQueued)
+    return Status::kBusy;
+  if (slot->state == Slot::State::kCancelling ||
+      slot->state == Slot::State::kTimingOut)
+    return Status::kOk;
+  if (slot->state == Slot::State::kRunning) {
     Status error = interface_.cancel(id);
     if (error != Status::kOk) return error;
     slot->deadline = roo_time::Uptime::Now() +
                      roo_time::Millis(options_.transition_timeout_ms);
   }
-  slot->cancelled = true;
+  slot->state = slot->state == Slot::State::kQueued
+                    ? Slot::State::kCancelledBeforeStart
+                    : Slot::State::kCancelling;
   if (slot == &station_) {
     reconnect_profile_ = 0;
     reconnect_.cancel();
@@ -218,17 +223,20 @@ Status Controller::cancel(OperationId id) {
 }
 
 void Controller::execute() {
-  if (closed_) return;
+  if (lifecycle_ == Lifecycle::kClosed) return;
   // Capture IDs: a listener's follow-up admission must wait for the next task.
   OperationId ids[] = {station_.result.id, scan_.result.id, write_.result.id};
   for (OperationId id : ids) {
     Slot *slot = find(id);
-    if (!slot || slot->started) continue;
-    if (slot->cancelled) {
+    if (!slot || slot->state == Slot::State::kRunning ||
+        slot->state == Slot::State::kCancelling ||
+        slot->state == Slot::State::kTimingOut)
+      continue;
+    if (slot->state == Slot::State::kCancelledBeforeStart) {
       finish(*slot, Status::kCancelled);
       continue;
     }
-    slot->started = true;
+    slot->state = Slot::State::kRunning;
     Status error = Status::kOk;
     switch (slot->result.kind) {
       case OperationKind::kSave:
@@ -270,18 +278,19 @@ void Controller::execute() {
 }
 
 void Controller::checkTimeouts() {
-  if (closed_) return;
+  if (lifecycle_ == Lifecycle::kClosed) return;
   for (Slot *slot : {&station_, &scan_}) {
-    if (!slot->result.id || !slot->started ||
+    if (!slot->result.id || slot->state == Slot::State::kQueued ||
         roo_time::Uptime::Now() < slot->deadline) {
       continue;
     }
-    if (slot->timed_out || slot->cancelled) {
+    if (slot->state == Slot::State::kTimingOut ||
+        slot->state == Slot::State::kCancelling) {
       faulted_ = true;
       reconnect_profile_ = 0;
       finish(*slot, Status::kTimeout);
     } else {
-      slot->timed_out = true;
+      slot->state = Slot::State::kTimingOut;
       slot->deadline = roo_time::Uptime::Now() +
                        roo_time::Millis(options_.transition_timeout_ms);
       interface_.cancel(slot->result.id);
@@ -294,7 +303,8 @@ void Controller::checkTimeouts() {
 void Controller::finish(Slot &slot, Status error, int32_t native,
                         bool has_native) {
   OperationResult result = slot.result;
-  result.error = slot.timed_out ? Status::kTimeout : error;
+  result.error =
+      slot.state == Slot::State::kTimingOut ? Status::kTimeout : error;
   result.native_code = native;
   result.has_native_code = has_native;
   slot = {};
@@ -311,10 +321,12 @@ void Controller::finish(Slot &slot, Status error, int32_t native,
 
 void Controller::onOperationFinished(const OperationResult &result) {
   Slot *slot = find(result.id);
-  if (!slot || closed_ || result.kind != slot->result.kind) return;
+  if (!slot || lifecycle_ == Lifecycle::kClosed ||
+      result.kind != slot->result.kind)
+    return;
   Status error = result.error;
   bool startup = false;
-  if (error == Status::kOk && !slot->timed_out && !slot->cancelled) {
+  if (error == Status::kOk && slot->state == Slot::State::kRunning) {
     if (result.kind == OperationKind::kScan) {
       ScanRead read;
       error =
@@ -332,20 +344,20 @@ void Controller::onOperationFinished(const OperationResult &result) {
     }
   }
   finish(*slot, error, result.native_code, result.has_native_code);
-  if (startup && !station_.result.id && !closed_) {
+  if (startup && !station_.result.id && lifecycle_ != Lifecycle::kClosed) {
     reconnect_profile_ = options_.startup_profile;
     reconnect_.scheduleNow();
   }
 }
 
 void Controller::onEnabledChanged(bool enabled) {
-  if (closed_) return;
+  if (lifecycle_ == Lifecycle::kClosed) return;
   enabled_ = enabled;
   for (Listener *listener : listeners_) listener->onEnabledChanged(enabled);
 }
 
 void Controller::onLinkChanged(const LinkState &state) {
-  if (closed_ || faulted_) return;
+  if (lifecycle_ == Lifecycle::kClosed || faulted_) return;
   if (state.connection_id != link_.connection_id &&
       state.connection_id != station_.result.id) {
     return;
@@ -359,7 +371,9 @@ void Controller::onLinkChanged(const LinkState &state) {
 }
 
 void Controller::startProfile() {
-  if (!reconnect_profile_ || closed_ || !enabled_ || faulted_) return;
+  if (!reconnect_profile_ || lifecycle_ == Lifecycle::kClosed || !enabled_ ||
+      faulted_)
+    return;
   ProfileId id = reconnect_profile_;
   Profile profile;
   Status error = loadProfile(id, profile);
