@@ -71,7 +71,7 @@ Status Decode(size_t f, const uint8_t *data, size_t n, ProfileSettings &s,
               Credentials &c) {
   ConnectionConfig &p = s.connection;
   if (f == 0) {
-    if (!n || n > 32) return Status::kCorrupt;
+    if (n == 0 || n > 32) return Status::kCorrupt;
     memcpy(p.ssid.bytes, data, n);
     p.ssid.size = n;
     return Status::kOk;
@@ -123,13 +123,13 @@ Status Decode(size_t f, const uint8_t *data, size_t n, ProfileSettings &s,
 }  // namespace
 
 Status FieldStore::readStatus(ProfileId id) const {
-  if (!id) return Status::kInvalidArgument;
+  if (id == 0) return Status::kInvalidArgument;
   char key[16];
   Key(id, "state", key);
   uint8_t data[64];
   size_t n = sizeof(data);
-  Status error = readField(key, data, n);
-  if (error != Status::kOk) return error;
+  Status status = readField(key, data, n);
+  if (status != Status::kOk) return status;
   if (n != 1) return Status::kCorrupt;
   if (data[0] == kIncomplete) return Status::kIncomplete;
   if (data[0] == kDeleted) return Status::kNotFound;
@@ -138,23 +138,23 @@ Status FieldStore::readStatus(ProfileId id) const {
 
 Status FieldStore::read(ProfileId id, ProfileSettings &settings,
                         Credentials &secret) const {
-  Status error = readStatus(id);
-  if (error != Status::kOk) return error;
+  Status status = readStatus(id);
+  if (status != Status::kOk) return status;
   for (size_t f = 0; f < 14; ++f) {
     char key[16];
     Key(id, kFields[f], key);
     uint8_t data[64];
     size_t n = sizeof(data);
-    error = readField(key, data, n);
-    if (f == 13 && error == Status::kNotFound &&
+    status = readField(key, data, n);
+    if (f == 13 && status == Status::kNotFound &&
         settings.connection.security == AuthMode::kOpen) {
       n = 0;
-      error = Status::kOk;
+      status = Status::kOk;
     }
-    if (error != Status::kOk)
-      return error == Status::kNotFound ? Status::kCorrupt : error;
-    error = Decode(f, data, n, settings, secret);
-    if (error != Status::kOk) return error;
+    if (status != Status::kOk)
+      return status == Status::kNotFound ? Status::kCorrupt : status;
+    status = Decode(f, data, n, settings, secret);
+    if (status != Status::kOk) return status;
   }
   return Validate(settings.connection, secret) == Status::kOk
              ? Status::kOk
@@ -164,8 +164,8 @@ Status FieldStore::read(ProfileId id, ProfileSettings &settings,
 Status FieldStore::loadProfile(ProfileId id, Profile &out) const {
   Profile result;
   Credentials secret;
-  Status error = read(id, result.settings, secret);
-  if (error != Status::kOk) return error;
+  Status status = read(id, result.settings, secret);
+  if (status != Status::kOk) return status;
   result.id = id;
   result.has_credentials = secret.size != 0;
   out = result;
@@ -175,70 +175,71 @@ Status FieldStore::loadProfile(ProfileId id, Profile &out) const {
 Status FieldStore::loadCredentials(ProfileId id, Credentials &out) const {
   ProfileSettings settings;
   Credentials secret;
-  Status error = read(id, settings, secret);
-  if (error == Status::kOk) out = secret;
-  return error;
+  Status status = read(id, settings, secret);
+  if (status == Status::kOk) out = secret;
+  return status;
 }
 
 Status FieldStore::saveProfile(ProfileId id, const ProfileSettings &settings,
                                const CredentialUpdate &update) {
-  if (!id) return Status::kInvalidArgument;
+  if (id == 0) return Status::kInvalidArgument;
   Credentials secret;
   if (settings.connection.security == AuthMode::kOpen &&
-      (update.intent != CredentialIntent::kClear || update.replacement.size)) {
+      (update.intent != CredentialIntent::kClear ||
+       update.replacement.size != 0)) {
     return Status::kInvalidArgument;
   }
   switch (update.intent) {
     case CredentialIntent::kKeep: {
-      Status error = loadCredentials(id, secret);
-      if (error != Status::kOk) return error;
+      Status status = loadCredentials(id, secret);
+      if (status != Status::kOk) return status;
       break;
     }
     case CredentialIntent::kReplace:
       secret = update.replacement;
       break;
     case CredentialIntent::kClear:
-      if (update.replacement.size) return Status::kInvalidArgument;
+      if (update.replacement.size != 0) return Status::kInvalidArgument;
       break;
     default:
       return Status::kInvalidArgument;
   }
-  Status error = Validate(settings.connection, secret);
-  if (error != Status::kOk) return error;
+  Status status = Validate(settings.connection, secret);
+  if (status != Status::kOk) return status;
   char key[16];
   Key(id, "state", key);
-  error = writeField(key, &kIncomplete, 1);
-  if (error != Status::kOk) return Status::kStorageFailure;
+  status = writeField(key, &kIncomplete, 1);
+  if (status != Status::kOk) return Status::kStorageFailure;
   for (size_t f = 0; f < 14; ++f) {
     uint8_t data[64];
     size_t n = Encode(f, settings, secret, data);
     Key(id, kFields[f], key);
-    error = n ? writeField(key, data, n) : eraseField(key);
-    if (error != Status::kOk) return Status::kIncomplete;
+    status = n != 0 ? writeField(key, data, n) : eraseField(key);
+    if (status != Status::kOk) return Status::kIncomplete;
   }
   Key(id, "state", key);
   if (writeField(key, &kReady, 1) == Status::kOk) return Status::kOk;
   // A failed final commit can still have reached storage. Verify every field.
-  error = readStatus(id);
-  if (error == Status::kIncomplete) return error;
-  if (error != Status::kOk) return Status::kCommitUnknown;
+  status = readStatus(id);
+  if (status == Status::kIncomplete) return status;
+  if (status != Status::kOk) return Status::kCommitUnknown;
   ProfileSettings stored;
   Credentials stored_secret;
-  error = read(id, stored, stored_secret);
-  if (error != Status::kOk) return Status::kCommitUnknown;
+  status = read(id, stored, stored_secret);
+  if (status != Status::kOk) return Status::kCommitUnknown;
   for (size_t f = 0; f < 14; ++f) {
     uint8_t expected[64];
     uint8_t actual[64];
     size_t a = Encode(f, settings, secret, expected);
     size_t b = Encode(f, stored, stored_secret, actual);
-    if (a != b || memcmp(expected, actual, a))
+    if (a != b || memcmp(expected, actual, a) != 0)
       return Status::kCommitUnknown;
   }
   return Status::kOk;
 }
 
 Status FieldStore::removeProfile(ProfileId id) {
-  if (!id) return Status::kInvalidArgument;
+  if (id == 0) return Status::kInvalidArgument;
   char key[16];
   Key(id, "state", key);
   if (writeField(key, &kDeleted, 1) != Status::kOk)

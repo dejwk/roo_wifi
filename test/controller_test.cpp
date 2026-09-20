@@ -381,12 +381,12 @@ TEST(StoreTest, FinalCommitVerification) {
    public:
     Status writeField(const char* key, const uint8_t* data,
                       size_t size) override {
-      Status error = MemoryStore::writeField(key, data, size);
+      Status status = MemoryStore::writeField(key, data, size);
       if (std::string(key) == "00000001state" && data[0] == 0x11) {
         final_written = true;
         return Status::kStorageFailure;
       }
-      return error;
+      return status;
     }
 
     Status readField(const char* key, uint8_t* out,

@@ -16,11 +16,11 @@ Status OrderedInterface::begin(Sink &sink,
   faulted_ = false;
   overflow_ = false;
   head_ = count_ = 0;
-  Status error = native_.attach(*this);
-  if (error != Status::kOk) {
+  Status status = native_.attach(*this);
+  if (status != Status::kOk) {
     sink_ = nullptr;
     dispatch_.reset();
-    return error;
+    return status;
   }
   attached_ = true;
   return Status::kOk;
@@ -29,56 +29,56 @@ Status OrderedInterface::begin(Sink &sink,
 Support OrderedInterface::support() const { return native_.support(); }
 
 Status OrderedInterface::stationAdmission(OperationId id) const {
-  if (!sink_ || faulted_) return Status::kNotStarted;
-  if (!id) return Status::kInvalidArgument;
-  if (station_.id || scan_.id) return Status::kBusy;
+  if (sink_ == nullptr || faulted_) return Status::kNotStarted;
+  if (id == 0) return Status::kInvalidArgument;
+  if (station_.id != 0 || scan_.id != 0) return Status::kBusy;
   return Status::kOk;
 }
 
 Status OrderedInterface::setEnabled(OperationId id, bool enabled) {
-  Status error = stationAdmission(id);
-  if (error != Status::kOk) return error;
+  Status status = stationAdmission(id);
+  if (status != Status::kOk) return status;
   station_ = {id, OperationKind::kEnable};
   desired_enabled_ = enabled;
-  error = native_.enable(enabled);
-  if (error != Status::kOk) station_ = {};
-  return error;
+  status = native_.enable(enabled);
+  if (status != Status::kOk) station_ = {};
+  return status;
 }
 
 Status OrderedInterface::scan(OperationId id, uint16_t capacity) {
-  Status error = stationAdmission(id);
-  if (error != Status::kOk) return error;
+  Status status = stationAdmission(id);
+  if (status != Status::kOk) return status;
   if (!enabled_) return Status::kDisabled;
   if (link_.phase != LinkPhase::kIdle && !support().scan_while_connected)
     return Status::kBusy;
   scan_ = {id, OperationKind::kScan};
-  error = native_.scan(capacity);
-  if (error != Status::kOk) scan_ = {};
-  return error;
+  status = native_.scan(capacity);
+  if (status != Status::kOk) scan_ = {};
+  return status;
 }
 
 Status OrderedInterface::connect(OperationId id, const ConnectionConfig &config,
                                  const Credentials &secret) {
-  Status error = stationAdmission(id);
-  if (error != Status::kOk) return error;
+  Status status = stationAdmission(id);
+  if (status != Status::kOk) return status;
   if (!enabled_) return Status::kDisabled;
-  error = Validate(config, secret);
-  if (error != Status::kOk) return error;
-  error = ValidateSupport(config, support());
-  if (error != Status::kOk) return error;
+  status = Validate(config, secret);
+  if (status != Status::kOk) return status;
+  status = ValidateSupport(config, support());
+  if (status != Status::kOk) return status;
   station_ = {id, OperationKind::kConnect};
   config_ = config;
   credentials_ = secret;
   if (link_.phase != LinkPhase::kIdle) {
     waiting_disconnect_ = true;
-    error = native_.disconnect();
-    if (error == Status::kNotFound) {
+    status = native_.disconnect();
+    if (status == Status::kNotFound) {
       post({NativeStation::Event::kDisconnected, link_});
-    } else if (error != Status::kOk) {
+    } else if (status != Status::kOk) {
       station_ = {};
       waiting_disconnect_ = false;
       credentials_ = {};
-      return error;
+      return status;
     }
   } else {
     // Commands and sink delivery are deferred even for immediate native
@@ -89,31 +89,31 @@ Status OrderedInterface::connect(OperationId id, const ConnectionConfig &config,
 }
 
 Status OrderedInterface::disconnect(OperationId id) {
-  Status error = stationAdmission(id);
-  if (error != Status::kOk) return error;
+  Status status = stationAdmission(id);
+  if (status != Status::kOk) return status;
   station_ = {id, OperationKind::kDisconnect};
   waiting_disconnect_ = true;
   if (link_.phase == LinkPhase::kIdle)
-    error = Status::kNotFound;
+    status = Status::kNotFound;
   else
-    error = native_.disconnect();
-  if (error == Status::kNotFound) {
+    status = native_.disconnect();
+  if (status == Status::kNotFound) {
     post({NativeStation::Event::kDisconnected, link_});
     return Status::kOk;
   }
-  if (error != Status::kOk) {
+  if (status != Status::kOk) {
     station_ = {};
     waiting_disconnect_ = false;
   }
-  return error;
+  return status;
 }
 
 Status OrderedInterface::cancel(OperationId id) {
-  if (!id) return Status::kNotFound;
+  if (id == 0) return Status::kNotFound;
   if (scan_.id == id) {
     if (scan_cancelling_) return Status::kOk;
-    Status error = native_.stopScan();
-    if (error != Status::kOk) return error;
+    Status status = native_.stopScan();
+    if (status != Status::kOk) return status;
     scan_cancelling_ = true;
     return Status::kOk;
   }
@@ -124,11 +124,11 @@ Status OrderedInterface::cancel(OperationId id) {
     return Status::kOk;
   }
   if (!waiting_disconnect_ && link_.phase != LinkPhase::kIdle) {
-    Status error = native_.disconnect();
-    if (error == Status::kNotFound)
+    Status status = native_.disconnect();
+    if (status == Status::kNotFound)
       post({NativeStation::Event::kDisconnected, link_});
-    else if (error != Status::kOk)
-      return error;
+    else if (status != Status::kOk)
+      return status;
     waiting_disconnect_ = true;
   }
   cancelling_ = true;
@@ -146,7 +146,7 @@ void OrderedInterface::shutdown() {
     native_.detach();
     attached_ = false;
   }
-  if (dispatch_) dispatch_->shutdown();
+  if (dispatch_ != nullptr) dispatch_->shutdown();
   sink_ = nullptr;
   station_ = {};
   scan_ = {};
@@ -168,7 +168,7 @@ void OrderedInterface::post(const NativeStation::Event &event) {
 }
 
 void OrderedInterface::drain() {
-  if (!sink_) return;
+  if (sink_ == nullptr) return;
   for (;;) {
     NativeStation::Event event{};
     bool overflow;
@@ -176,7 +176,7 @@ void OrderedInterface::drain() {
       roo::lock_guard<roo::mutex> lock(mutex_);
       overflow = overflow_;
       if (overflow) count_ = 0;
-      if (!overflow && !count_) break;
+      if (!overflow && count_ == 0) break;
       if (!overflow) {
         event = queue_[head_];
         head_ = (head_ + 1) % queue_.size();
@@ -191,7 +191,7 @@ void OrderedInterface::drain() {
     }
     process(event);
   }
-  if (station_.id && station_.kind == OperationKind::kConnect &&
+  if (station_.id != 0 && station_.kind == OperationKind::kConnect &&
       !waiting_disconnect_ && link_.phase == LinkPhase::kIdle) {
     if (cancelling_)
       finishStation(Status::kCancelled);
@@ -207,18 +207,18 @@ void OrderedInterface::startConnection() {
   link_.security = config_.security;
   link_.phase = LinkPhase::kConnecting;
   sink_->onLinkChanged(link_);
-  Status error = native_.connect(config_, credentials_);
+  Status status = native_.connect(config_, credentials_);
   credentials_ = {};
-  if (error != Status::kOk) {
+  if (status != Status::kOk) {
     link_.phase = LinkPhase::kIdle;
-    link_.reason = error;
+    link_.reason = status;
     sink_->onLinkChanged(link_);
-    finishStation(error);
+    finishStation(status);
   }
 }
 
 void OrderedInterface::finishStation(Status error, int32_t code) {
-  if (!station_.id) return;
+  if (station_.id == 0) return;
   OperationResult result = station_;
   result.error = cancelling_ ? Status::kCancelled : error;
   result.native_code = code;
@@ -230,7 +230,7 @@ void OrderedInterface::finishStation(Status error, int32_t code) {
 }
 
 void OrderedInterface::finishScan(Status error, int32_t code) {
-  if (!scan_.id) return;
+  if (scan_.id == 0) return;
   OperationResult result = scan_;
   result.error = scan_cancelling_ ? Status::kCancelled : error;
   result.native_code = code;
@@ -253,20 +253,20 @@ void OrderedInterface::process(const NativeStation::Event &event) {
         link_.has_ipv4 = false;
         sink_->onLinkChanged(link_);
       }
-      if (station_.id && station_.kind == OperationKind::kEnable &&
+      if (station_.id != 0 && station_.kind == OperationKind::kEnable &&
           enabled_ == desired_enabled_) {
         finishStation(event.error, event.native_code);
       }
       break;
     case E::kPrepared:
-      if (station_.id && station_.kind == OperationKind::kConnect &&
+      if (station_.id != 0 && station_.kind == OperationKind::kConnect &&
           !waiting_disconnect_ && !cancelling_) {
-        Status error = native_.continueConnect();
-        if (error != Status::kOk) {
+        Status status = native_.continueConnect();
+        if (status != Status::kOk) {
           link_.phase = LinkPhase::kIdle;
-          link_.reason = error;
+          link_.reason = status;
           sink_->onLinkChanged(link_);
-          finishStation(error);
+          finishStation(status);
         }
       }
       break;
@@ -288,7 +288,7 @@ void OrderedInterface::process(const NativeStation::Event &event) {
       sink_->onLinkChanged(link_);
       break;
     case E::kAddressReady:
-      if (event.link.ssid.size &&
+      if (event.link.ssid.size != 0 &&
           (event.link.ssid.size != link_.ssid.size ||
            memcmp(event.link.ssid.bytes, link_.ssid.bytes, link_.ssid.size) ||
            memcmp(event.link.bssid.bytes, link_.bssid.bytes, 6))) {
@@ -322,7 +322,7 @@ void OrderedInterface::process(const NativeStation::Event &event) {
       }
       break;
     case E::kDisconnected:
-      if (event.link.ssid.size &&
+      if (event.link.ssid.size != 0 &&
           (event.link.ssid.size != link_.ssid.size ||
            memcmp(event.link.ssid.bytes, link_.ssid.bytes, link_.ssid.size))) {
         return;
@@ -333,7 +333,7 @@ void OrderedInterface::process(const NativeStation::Event &event) {
       link_.native_code = event.native_code;
       link_.has_native_code = event.native_code != 0;
       sink_->onLinkChanged(link_);
-      if (station_.id) {
+      if (station_.id != 0) {
         if (waiting_disconnect_ && station_.kind == OperationKind::kConnect &&
             !cancelling_) {
           waiting_disconnect_ = false;

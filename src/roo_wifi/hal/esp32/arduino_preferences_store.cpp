@@ -47,9 +47,9 @@ Status ArduinoPreferencesStore::readEnabled(bool &out) const {
                            roo_prefs::Transaction::Mode::kReadOnly);
   if (!t.active()) return Status::kStorageFailure;
   bool value;
-  Status error = Read(t.store().readBool("enabled", value));
-  if (error == Status::kOk) out = value;
-  return error;
+  Status status = Read(t.store().readBool("enabled", value));
+  if (status == Status::kOk) out = value;
+  return status;
 }
 
 Status ArduinoPreferencesStore::writeEnabled(bool enabled) {
@@ -66,9 +66,9 @@ Status ArduinoPreferencesStore::readField(const char *key, uint8_t *out,
                            roo_prefs::Transaction::Mode::kReadOnly);
   if (!t.active()) return Status::kStorageFailure;
   size_t length = 0;
-  Status error = Read(t.store().readBytes(key, out, size, &length));
-  if (error == Status::kOk) size = length;
-  return error;
+  Status status = Read(t.store().readBytes(key, out, size, &length));
+  if (status == Status::kOk) size = length;
+  return status;
 }
 
 Status ArduinoPreferencesStore::writeField(const char *key, const uint8_t *data,
@@ -103,8 +103,8 @@ Status ArduinoPreferencesStore::importLegacy(
     char key[16];
     LegacyKey(ssid, key);
     std::string password;
-    Status error = Read(t.store().readString(key, password));
-    if (error != Status::kOk) return error;
+    Status status = Read(t.store().readString(key, password));
+    if (status != Status::kOk) return status;
     if (password.size() > 64) return Status::kCorrupt;
     update.intent = CredentialIntent::kReplace;
     update.replacement.size = password.size();
@@ -123,8 +123,8 @@ Status ArduinoPreferencesStore::readLegacyDefault(Ssid &out) const {
                            roo_prefs::Transaction::Mode::kReadOnly);
   if (!t.active()) return Status::kStorageFailure;
   std::string ssid;
-  Status error = Read(t.store().readString("ssid", ssid));
-  if (error != Status::kOk) return error;
+  Status status = Read(t.store().readString("ssid", ssid));
+  if (status != Status::kOk) return status;
   if (ssid.empty() || ssid.size() > 32) return Status::kCorrupt;
   Ssid result;
   result.size = ssid.size();

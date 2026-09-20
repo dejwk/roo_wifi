@@ -26,13 +26,13 @@ Controller::~Controller() { close(false); }
 Status Controller::begin() {
   if (lifecycle_ == Lifecycle::kClosed) return Status::kNotStarted;
   if (lifecycle_ == Lifecycle::kRunning) return Status::kBusy;
-  Status error = store_.begin();
-  if (error != Status::kOk) return error;
+  Status status = store_.begin();
+  if (status != Status::kOk) return status;
   bool enabled = false;
-  error = store_.readEnabled(enabled);
-  if (error != Status::kOk && error != Status::kNotFound) return error;
-  error = interface_.begin(*this, scheduler_);
-  if (error != Status::kOk) return error;
+  status = store_.readEnabled(enabled);
+  if (status != Status::kOk && status != Status::kNotFound) return status;
+  status = interface_.begin(*this, scheduler_);
+  if (status != Status::kOk) return status;
   lifecycle_ = Lifecycle::kRunning;
   return setEnabled(enabled).error;
 }
@@ -47,7 +47,7 @@ void Controller::close(bool notify) {
   if (running) interface_.shutdown();
   if (notify) {
     for (Slot *slot : {&station_, &scan_, &write_})
-      if (slot->result.id) finish(*slot, Status::kCancelled);
+      if (slot->result.id != 0) finish(*slot, Status::kCancelled);
   }
   station_ = {};
   scan_ = {};
@@ -85,7 +85,7 @@ LinkState Controller::linkState() const { return link_; }
 
 Status Controller::loadProfile(ProfileId id, Profile &out) const {
   if (lifecycle_ != Lifecycle::kRunning) return Status::kNotStarted;
-  if (!id) return Status::kInvalidArgument;
+  if (id == 0) return Status::kInvalidArgument;
   return store_.loadProfile(id, out);
 }
 
@@ -98,7 +98,7 @@ Status Controller::radioAdmission() const {
 Controller::RequestResult Controller::admit(Slot &slot, OperationKind kind,
                                             ProfileId profile) {
   if (lifecycle_ != Lifecycle::kRunning) return {0, Status::kNotStarted};
-  if (slot.result.id) return {0, Status::kBusy};
+  if (slot.result.id != 0) return {0, Status::kBusy};
   if (next_id_ == std::numeric_limits<OperationId>::max())
     return {0, Status::kBusy};
   slot = {};
@@ -108,11 +108,11 @@ Controller::RequestResult Controller::admit(Slot &slot, OperationKind kind,
 }
 
 Controller::RequestResult Controller::setEnabled(bool enabled) {
-  Status error = radioAdmission();
-  if (error != Status::kOk) return {0, error};
-  if (scan_.result.id) return {0, Status::kBusy};
+  Status status = radioAdmission();
+  if (status != Status::kOk) return {0, status};
+  if (scan_.result.id != 0) return {0, Status::kBusy};
   RequestResult result = admit(station_, OperationKind::kEnable);
-  if (result.id) {
+  if (result.id != 0) {
     desired_enabled_ = enabled;
     reconnect_.cancel();
     reconnect_profile_ = 0;
@@ -121,10 +121,10 @@ Controller::RequestResult Controller::setEnabled(bool enabled) {
 }
 
 Controller::RequestResult Controller::scan() {
-  Status error = radioAdmission();
-  if (error != Status::kOk) return {0, error};
+  Status status = radioAdmission();
+  if (status != Status::kOk) return {0, status};
   if (!enabled_) return {0, Status::kDisabled};
-  if (station_.result.id ||
+  if (station_.result.id != 0 ||
       (link_.phase != LinkPhase::kIdle && !support().scan_while_connected)) {
     return {0, Status::kBusy};
   }
@@ -133,16 +133,16 @@ Controller::RequestResult Controller::scan() {
 
 Controller::RequestResult Controller::connect(
     const ConnectionConfig &config, const Credentials &credential) {
-  Status error = radioAdmission();
-  if (error != Status::kOk) return {0, error};
+  Status status = radioAdmission();
+  if (status != Status::kOk) return {0, status};
   if (!enabled_) return {0, Status::kDisabled};
-  if (scan_.result.id) return {0, Status::kBusy};
-  error = Validate(config, credential);
-  if (error != Status::kOk) return {0, error};
-  error = ValidateSupport(config, support());
-  if (error != Status::kOk) return {0, error};
+  if (scan_.result.id != 0) return {0, Status::kBusy};
+  status = Validate(config, credential);
+  if (status != Status::kOk) return {0, status};
+  status = ValidateSupport(config, support());
+  if (status != Status::kOk) return {0, status};
   RequestResult result = admit(station_, OperationKind::kConnect);
-  if (result.id) {
+  if (result.id != 0) {
     config_ = config;
     credentials_ = credential;
     reconnect_profile_ = 0;
@@ -154,12 +154,12 @@ Controller::RequestResult Controller::connect(
 Controller::RequestResult Controller::connect(ProfileId id) {
   Profile profile;
   Credentials credential;
-  Status error = loadProfile(id, profile);
-  if (error != Status::kOk) return {0, error};
-  error = store_.loadCredentials(id, credential);
-  if (error != Status::kOk) return {0, error};
+  Status status = loadProfile(id, profile);
+  if (status != Status::kOk) return {0, status};
+  status = store_.loadCredentials(id, credential);
+  if (status != Status::kOk) return {0, status};
   RequestResult result = connect(profile.settings.connection, credential);
-  if (result.id) {
+  if (result.id != 0) {
     station_.result.profile_id = id;
     reconnect_profile_ = profile.settings.auto_connect ? id : 0;
   }
@@ -167,10 +167,10 @@ Controller::RequestResult Controller::connect(ProfileId id) {
 }
 
 Controller::RequestResult Controller::disconnect() {
-  Status error = radioAdmission();
-  if (error != Status::kOk) return {0, error};
+  Status status = radioAdmission();
+  if (status != Status::kOk) return {0, status};
   RequestResult result = admit(station_, OperationKind::kDisconnect);
-  if (result.id) {
+  if (result.id != 0) {
     reconnect_profile_ = 0;
     reconnect_.cancel();
   }
@@ -180,9 +180,9 @@ Controller::RequestResult Controller::disconnect() {
 Controller::RequestResult Controller::saveProfile(
     ProfileId id, const ProfileSettings &settings,
     const CredentialUpdate &credential) {
-  if (!id) return {0, Status::kInvalidArgument};
+  if (id == 0) return {0, Status::kInvalidArgument};
   RequestResult result = admit(write_, OperationKind::kSave, id);
-  if (result.id) {
+  if (result.id != 0) {
     settings_ = settings;
     update_ = credential;
   }
@@ -190,12 +190,12 @@ Controller::RequestResult Controller::saveProfile(
 }
 
 Controller::RequestResult Controller::removeProfile(ProfileId id) {
-  if (!id) return {0, Status::kInvalidArgument};
+  if (id == 0) return {0, Status::kInvalidArgument};
   return admit(write_, OperationKind::kRemove, id);
 }
 
 Controller::Slot *Controller::find(OperationId id) {
-  if (!id) return nullptr;
+  if (id == 0) return nullptr;
   for (Slot *slot : {&station_, &scan_, &write_})
     if (slot->result.id == id) return slot;
   return nullptr;
@@ -203,15 +203,15 @@ Controller::Slot *Controller::find(OperationId id) {
 
 Status Controller::cancel(OperationId id) {
   Slot *slot = find(id);
-  if (!slot) return Status::kNotFound;
+  if (slot == nullptr) return Status::kNotFound;
   if (slot == &write_ && slot->state != Slot::State::kQueued)
     return Status::kBusy;
   if (slot->state == Slot::State::kCancelling ||
       slot->state == Slot::State::kTimingOut)
     return Status::kOk;
   if (slot->state == Slot::State::kRunning) {
-    Status error = interface_.cancel(id);
-    if (error != Status::kOk) return error;
+    Status status = interface_.cancel(id);
+    if (status != Status::kOk) return status;
     slot->deadline = roo_time::Uptime::Now() +
                      roo_time::Millis(options_.transition_timeout_ms);
   }
@@ -232,7 +232,7 @@ void Controller::execute() {
   OperationId ids[] = {station_.result.id, scan_.result.id, write_.result.id};
   for (OperationId id : ids) {
     Slot *slot = find(id);
-    if (!slot || slot->state == Slot::State::kRunning ||
+    if (slot == nullptr || slot->state == Slot::State::kRunning ||
         slot->state == Slot::State::kCancelling ||
         slot->state == Slot::State::kTimingOut)
       continue;
@@ -241,33 +241,33 @@ void Controller::execute() {
       continue;
     }
     slot->state = Slot::State::kRunning;
-    Status error = Status::kOk;
+    Status status = Status::kOk;
     switch (slot->result.kind) {
       case OperationKind::kSave:
-        error = store_.saveProfile(slot->result.profile_id, settings_, update_);
+        status = store_.saveProfile(slot->result.profile_id, settings_, update_);
         update_ = {};
         break;
       case OperationKind::kRemove:
-        error = store_.removeProfile(slot->result.profile_id);
+        status = store_.removeProfile(slot->result.profile_id);
         break;
       case OperationKind::kEnable:
-        error = interface_.setEnabled(id, desired_enabled_);
+        status = interface_.setEnabled(id, desired_enabled_);
         break;
       case OperationKind::kConnect:
-        error = interface_.connect(id, config_, credentials_);
+        status = interface_.connect(id, config_, credentials_);
         credentials_ = {};
         break;
       case OperationKind::kDisconnect:
-        error = interface_.disconnect(id);
+        status = interface_.disconnect(id);
         break;
       case OperationKind::kScan:
         for (Listener *listener : listeners_)
           listener->onScanStateChanged(true);
-        error = interface_.scan(id, options_.max_scan_results);
+        status = interface_.scan(id, options_.max_scan_results);
         break;
     }
-    if (slot == &write_ || error != Status::kOk) {
-      finish(*slot, error);
+    if (slot == &write_ || status != Status::kOk) {
+      finish(*slot, status);
       continue;
     }
     uint32_t timeout = slot == &scan_ ? options_.scan_timeout_ms
@@ -276,14 +276,14 @@ void Controller::execute() {
                            : options_.transition_timeout_ms;
     slot->deadline = roo_time::Uptime::Now() + roo_time::Millis(timeout);
   }
-  if (station_.result.id || scan_.result.id)
+  if (station_.result.id != 0 || scan_.result.id != 0)
     timer_.scheduleAfter(roo_time::Millis(1));
 }
 
 void Controller::checkTimeouts() {
   if (lifecycle_ == Lifecycle::kClosed) return;
   for (Slot *slot : {&station_, &scan_}) {
-    if (!slot->result.id || slot->state == Slot::State::kQueued ||
+    if (slot->result.id == 0 || slot->state == Slot::State::kQueued ||
         roo_time::Uptime::Now() < slot->deadline) {
       continue;
     }
@@ -299,7 +299,7 @@ void Controller::checkTimeouts() {
       interface_.cancel(slot->result.id);
     }
   }
-  if (station_.result.id || scan_.result.id)
+  if (station_.result.id != 0 || scan_.result.id != 0)
     timer_.scheduleAfter(roo_time::Millis(1));
 }
 
@@ -324,30 +324,31 @@ void Controller::finish(Slot &slot, Status error, int32_t native,
 
 void Controller::onOperationFinished(const OperationResult &result) {
   Slot *slot = find(result.id);
-  if (!slot || lifecycle_ == Lifecycle::kClosed ||
+  if (slot == nullptr || lifecycle_ == Lifecycle::kClosed ||
       result.kind != slot->result.kind)
     return;
-  Status error = result.error;
+  Status status = result.error;
   bool startup = false;
-  if (error == Status::kOk && slot->state == Slot::State::kRunning) {
+  if (status == Status::kOk && slot->state == Slot::State::kRunning) {
     if (result.kind == OperationKind::kScan) {
       Interface::ScanRead read;
-      error =
+      status =
           interface_.readScanResults(records_.data(), records_.size(), read);
-      if (error == Status::kOk && read.count <= records_.size()) {
+      if (status == Status::kOk && read.count <= records_.size()) {
         snapshot_ = {snapshot_.generation + 1, records_.data(), read.count,
                      read.truncated};
         for (Listener *listener : listeners_) listener->onScanChanged();
-      } else if (error == Status::kOk) {
-        error = Status::kCorrupt;
+      } else if (status == Status::kOk) {
+        status = Status::kCorrupt;
       }
     } else if (result.kind == OperationKind::kEnable) {
-      error = store_.writeEnabled(enabled_);
-      startup = error == Status::kOk && enabled_;
+      status = store_.writeEnabled(enabled_);
+      startup = status == Status::kOk && enabled_;
     }
   }
-  finish(*slot, error, result.native_code, result.has_native_code);
-  if (startup && !station_.result.id && lifecycle_ != Lifecycle::kClosed) {
+  finish(*slot, status, result.native_code, result.has_native_code);
+  if (startup && station_.result.id == 0 &&
+      lifecycle_ != Lifecycle::kClosed) {
     reconnect_profile_ = options_.startup_profile;
     reconnect_.scheduleNow();
   }
@@ -367,33 +368,33 @@ void Controller::onLinkChanged(const LinkState &state) {
   }
   link_ = state;
   for (Listener *listener : listeners_) listener->onLinkChanged(state);
-  if (state.phase == LinkPhase::kIdle && reconnect_profile_ &&
-      !station_.result.id) {
+  if (state.phase == LinkPhase::kIdle && reconnect_profile_ != 0 &&
+      station_.result.id == 0) {
     reconnect_.scheduleAfter(roo_time::Seconds(1));
   }
 }
 
 void Controller::startProfile() {
-  if (!reconnect_profile_ || lifecycle_ == Lifecycle::kClosed || !enabled_ ||
+  if (reconnect_profile_ == 0 || lifecycle_ == Lifecycle::kClosed || !enabled_ ||
       faulted_)
     return;
   ProfileId id = reconnect_profile_;
   Profile profile;
-  Status error = loadProfile(id, profile);
-  if (error == Status::kOk && !profile.settings.auto_connect) {
+  Status status = loadProfile(id, profile);
+  if (status == Status::kOk && !profile.settings.auto_connect) {
     reconnect_profile_ = 0;
     return;
   }
-  if (error == Status::kOk) {
+  if (status == Status::kOk) {
     RequestResult result = connect(id);
-    if (result.id) return;
-    error = result.error;
-    if (error == Status::kBusy) {
+    if (result.id != 0) return;
+    status = result.error;
+    if (status == Status::kBusy) {
       reconnect_.scheduleAfter(roo_time::Seconds(1));
       return;
     }
   }
   RequestResult request = admit(station_, OperationKind::kConnect, id);
-  if (request.id) finish(station_, error);
+  if (request.id != 0) finish(station_, status);
 }
 }  // namespace roo_wifi

@@ -206,8 +206,8 @@ Status Esp32Station::stopScan() {
   roo::unique_lock<roo::mutex> lock(mutex_);
   scan_cancelled_ = true;
   lock.unlock();
-  Status error = Result(esp_wifi_scan_stop());
-  return error;
+  Status status = Result(esp_wifi_scan_stop());
+  return status;
 }
 
 Status Esp32Station::connect(const ConnectionConfig &config,
@@ -255,8 +255,8 @@ Status Esp32Station::disconnect() {
   if (selecting_) {
     scan_cancelled_ = true;
     lock.unlock();
-    Status error = Result(esp_wifi_scan_stop());
-    return error;
+    Status status = Result(esp_wifi_scan_stop());
+    return status;
   }
   // The ordered layer synthesizes idle only when it already knows no attempt
   // exists. ESP_OK during pre-association cancellation is not proof of idle.
@@ -321,9 +321,9 @@ Status Esp32Station::startSelected(const wifi_ap_record_t &ap) {
   config.sta.threshold.authmode = ap.authmode;
   config.sta.pmf_cfg.capable = true;
   config.sta.pmf_cfg.required = config_.security == AuthMode::kWpa3Personal;
-  Status error = Result(esp_wifi_set_config(WIFI_IF_STA, &config));
+  Status status = Result(esp_wifi_set_config(WIFI_IF_STA, &config));
   secret_ = {};
-  return error == Status::kOk ? Result(esp_wifi_connect()) : error;
+  return status == Status::kOk ? Result(esp_wifi_connect()) : status;
 }
 
 void Esp32Station::Dispatch(void *context, esp_event_base_t base, int32_t id,
