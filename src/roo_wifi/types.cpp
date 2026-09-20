@@ -21,7 +21,8 @@ bool Hex(const Credentials &c) {
   return true;
 }
 }  // namespace
-Error Validate(const ConnectionConfig &c, const Credentials &secret) {
+
+Status Validate(const ConnectionConfig &c, const Credentials &secret) {
   if ((secret.encoding != CredentialEncoding::kPassphrase &&
        secret.encoding != CredentialEncoding::kRawPsk &&
        secret.encoding != CredentialEncoding::kWepKey) ||
@@ -29,58 +30,58 @@ Error Validate(const ConnectionConfig &c, const Credentials &secret) {
       (c.mac_policy != MacPolicy::kDevice &&
        c.mac_policy != MacPolicy::kRandomized) ||
       (c.ip_mode != IpMode::kDhcp && c.ip_mode != IpMode::kStaticIpv4))
-    return Error::kInvalidArgument;
+    return Status::kInvalidArgument;
   if (c.ip_mode == IpMode::kStaticIpv4) {
     const StaticIpv4 &s = c.static_ipv4;
     if (s.prefix_length == 0 || s.prefix_length > 30)
-      return Error::kInvalidArgument;
+      return Status::kInvalidArgument;
     uint32_t mask = 0xffffffffu << (32 - s.prefix_length);
     uint32_t ip = Address(s.address), gw = Address(s.gateway);
     if (!Unicast(ip) || (ip & ~mask) == 0 || (ip & ~mask) == ~mask ||
         (gw && (!Unicast(gw) || (gw & mask) != (ip & mask) ||
                 (gw & ~mask) == 0 || (gw & ~mask) == ~mask || gw == ip)) ||
         !Unicast(Address(s.dns1)) || (s.has_dns2 && !Unicast(Address(s.dns2))))
-      return Error::kInvalidArgument;
+      return Status::kInvalidArgument;
   }
   if (c.security == AuthMode::kOpen)
-    return secret.size == 0 ? Error::kOk : Error::kInvalidArgument;
+    return secret.size == 0 ? Status::kOk : Status::kInvalidArgument;
   if (c.security == AuthMode::kWep) {
     if (secret.encoding != CredentialEncoding::kWepKey)
-      return Error::kInvalidArgument;
+      return Status::kInvalidArgument;
     return (secret.size == 5 || secret.size == 13 ||
             ((secret.size == 10 || secret.size == 26) && Hex(secret)))
-               ? Error::kOk
-               : Error::kInvalidArgument;
+               ? Status::kOk
+               : Status::kInvalidArgument;
   }
   if (c.security != AuthMode::kWpaPersonal &&
       c.security != AuthMode::kWpa2Personal &&
       c.security != AuthMode::kWpaWpa2Personal &&
       c.security != AuthMode::kWpa3Personal &&
       c.security != AuthMode::kWpa2Wpa3Personal)
-    return Error::kUnsupported;
+    return Status::kUnsupported;
   if (secret.encoding == CredentialEncoding::kRawPsk) {
     if (c.security == AuthMode::kWpa3Personal ||
         c.security == AuthMode::kWpa2Wpa3Personal)
-      return Error::kUnsupported;
-    return secret.size == 64 && Hex(secret) ? Error::kOk
-                                            : Error::kInvalidArgument;
+      return Status::kUnsupported;
+    return secret.size == 64 && Hex(secret) ? Status::kOk
+                                            : Status::kInvalidArgument;
   }
   if (secret.encoding != CredentialEncoding::kPassphrase || secret.size < 8 ||
       secret.size > 63)
-    return Error::kInvalidArgument;
+    return Status::kInvalidArgument;
   for (size_t i = 0; i < secret.size; ++i)
     if (secret.bytes[i] < 32 || secret.bytes[i] > 126)
-      return Error::kInvalidArgument;
-  return Error::kOk;
+      return Status::kInvalidArgument;
+  return Status::kOk;
 }
 
-Error ValidateSupport(const ConnectionConfig &c, const Support &s) {
+Status ValidateSupport(const ConnectionConfig &c, const Support &s) {
   if (static_cast<unsigned>(c.security) >= 32 ||
       !(s.authentication_modes & (1u << static_cast<unsigned>(c.security))) ||
       (c.hidden && !s.hidden_networks) ||
       (c.ip_mode == IpMode::kStaticIpv4 && !s.static_ipv4) ||
       (c.mac_policy == MacPolicy::kRandomized && !s.randomized_mac))
-    return Error::kUnsupported;
-  return Error::kOk;
+    return Status::kUnsupported;
+  return Status::kOk;
 }
 }  // namespace roo_wifi

@@ -31,7 +31,7 @@ MyStore store;
 roo_wifi::ControllerOptions options;
 options.startup_profile = 1;  // Zero disables startup selection.
 roo_wifi::Controller wifi(radio, store, scheduler, options);
-roo_wifi::Error error = wifi.begin();
+roo_wifi::Status error = wifi.begin();
 ```
 
 `begin()` restores persisted enablement asynchronously. A listener observes

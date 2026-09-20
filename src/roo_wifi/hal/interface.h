@@ -1,11 +1,14 @@
 #pragma once
 #include "roo_wifi/types.h"
+
 namespace roo_scheduler {
 class Scheduler;
 }
+
 namespace roo_wifi {
-/// Radio adapter; all sink delivery is deferred and serialized on the supplied
-/// scheduler. begin must not emit callbacks. Commands copy their inputs and
+/// Adapts a platform radio to the controller's asynchronous operation model.
+/// All sink delivery is deferred and serialized on the supplied scheduler.
+/// begin must not emit callbacks. Commands copy their inputs and
 /// return admission only. A successful scan read must copy the complete bounded
 /// result; on failure it must leave the caller's buffer and ScanRead unchanged.
 /// shutdown detaches producers and neutralizes queued work before returning.
@@ -17,44 +20,60 @@ class Interface {
     /// Destroys a previously detached event sink.
     virtual ~Sink() = default;
 
-    /// Delivers exactly one terminal result per admitted request ID.
+    /// Delivers the terminal result for an admitted operation exactly once.
+    /// @param result Completed operation and its outcome.
     virtual void onOperationFinished(const OperationResult &result) = 0;
 
-    /// Notifies association, address readiness or subsequent link changes.
+    /// Reports association, address readiness, or another link-state change.
+    /// @param state Current observed link diagnostics.
     virtual void onLinkChanged(const LinkState &state) = 0;
 
-    /// Notifies actual physical radio state.
+    /// Reports the observed physical radio state.
+    /// @param enabled True when the radio is enabled.
     virtual void onEnabledChanged(bool enabled) = 0;
   };
 
   /// Destroys a detached radio adapter.
   virtual ~Interface() = default;
 
-  /// Attaches the sole sink and scheduler without emitting callbacks.
-  virtual Error begin(Sink &sink, roo_scheduler::Scheduler &scheduler) = 0;
+  /// Attaches the controller sink and scheduler without emitting callbacks.
+  /// @param sink Receiver of deferred radio events.
+  /// @param scheduler Context on which events are delivered.
+  virtual Status begin(Sink &sink, roo_scheduler::Scheduler &scheduler) = 0;
 
   /// Returns actual hardware support, independently of consumer presentation.
   virtual Support support() const = 0;
-  /// kOk means admitted; completion is deferred and echoes the supplied ID.
-  virtual Error setEnabled(OperationId id, bool enabled) = 0;
 
-  /// Admits a bounded scan using the caller-supplied nonzero ID.
-  virtual Error scan(OperationId id, uint16_t max_results) = 0;
+  /// Requests a physical radio enablement transition.
+  /// @param id Nonzero operation ID echoed in the deferred completion.
+  /// @param enabled Desired physical radio state.
+  virtual Status setEnabled(OperationId id, bool enabled) = 0;
 
-  /// Copies connection input on admission; succeeds only at address readiness.
-  virtual Error connect(OperationId id, const ConnectionConfig &config,
-                        const Credentials &credentials) = 0;
+  /// Starts a bounded network scan.
+  /// @param id Nonzero operation ID echoed in the deferred completion.
+  /// @param max_results Maximum records to retain.
+  virtual Status scan(OperationId id, uint16_t max_results) = 0;
 
-  /// Admits physical disconnect; completes from its native lifecycle outcome.
-  virtual Error disconnect(OperationId id) = 0;
-  /// Accepted cancellation completes the target ID with kCancelled, not a new
-  /// ID.
-  virtual Error cancel(OperationId target) = 0;
-  /// Read during successful scan completion; copies at most capacity records.
-  virtual Error readScanResults(ScanRecord *out, size_t capacity,
-                                ScanRead &result) const = 0;
-  /// Detaches the sink and prevents subsequent delivery, including queued
-  /// events.
+  /// Starts a connection and reports success only after address readiness.
+  /// @param id Nonzero operation ID echoed in the deferred completion.
+  /// @param config Connection settings to copy.
+  /// @param credentials Credential material to copy.
+  virtual Status connect(OperationId id, const ConnectionConfig &config,
+                         const Credentials &credentials) = 0;
+
+  /// Starts a physical disconnect and reports its lifecycle outcome.
+  /// @param id Nonzero operation ID echoed in the deferred completion.
+  virtual Status disconnect(OperationId id) = 0;
+  /// Cancels a pending radio operation.
+  /// @param target ID that completes with kCancelled rather than a new ID.
+  virtual Status cancel(OperationId target) = 0;
+  /// Copies records from a completed scan into caller-owned storage.
+  /// @param out Destination record array.
+  /// @param capacity Number of records that fit in @p out.
+  /// @param result Receives count and truncation state on success.
+  virtual Status readScanResults(ScanRecord *out, size_t capacity,
+                                 ScanRead &result) const = 0;
+  /// Detaches the sink and prevents all subsequent event delivery.
   virtual void shutdown() = 0;
 };
 

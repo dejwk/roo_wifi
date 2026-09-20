@@ -1,12 +1,13 @@
 #pragma once
 #include <stddef.h>
 #include <stdint.h>
+
 namespace roo_wifi {
 using ProfileId = uint32_t;  // Caller-assigned key; zero means no profile.
 using OperationId =
     uint64_t;  // Nonzero, never reused within a controller lifetime.
 
-enum class Error : uint8_t {
+enum class Status : uint8_t {
   kOk,
   kNotFound,
   kInvalidArgument,
@@ -28,9 +29,11 @@ struct Ssid {
   uint8_t bytes[32] = {};
   uint8_t size = 0;
 };
+
 struct MacAddress {
   uint8_t bytes[6] = {};
 };
+
 struct Ipv4Address {
   uint8_t bytes[4] = {};
 };
@@ -70,12 +73,14 @@ struct ConnectionConfig {
 
 /// Secret material for one admitted attempt, never part of profile metadata.
 enum class CredentialEncoding : uint8_t { kPassphrase, kRawPsk, kWepKey };
+
 struct Credentials {
   CredentialEncoding encoding = CredentialEncoding::kPassphrase;
   uint8_t bytes[64] = {};
   uint8_t size = 0;
 };
 enum class CredentialIntent : uint8_t { kKeep, kReplace, kClear };
+
 struct CredentialUpdate {
   CredentialIntent intent = CredentialIntent::kKeep;
   Credentials replacement;  // Used only for kReplace.
@@ -85,6 +90,7 @@ struct ProfileSettings {
   ConnectionConfig connection;
   bool auto_connect = true;
 };
+
 struct Profile {
   ProfileId id = 0;
   ProfileSettings settings;
@@ -92,7 +98,7 @@ struct Profile {
 };
 
 struct SaveResult {
-  Error error = Error::kOk;
+  Status error = Status::kOk;
   ProfileId id = 0;
 };
 
@@ -125,6 +131,7 @@ struct ScanRecord {
   int8_t rssi_dbm = -128;
   uint16_t channel = 0;
 };
+
 /// Borrowed until next successful scan publication or controller shutdown.
 struct ScanSnapshot {
   uint64_t generation = 0;
@@ -132,10 +139,12 @@ struct ScanSnapshot {
   size_t count = 0;
   bool truncated = false;
 };
+
 struct ScanRead {
   size_t count = 0;
   bool truncated = false;
 };
+
 struct Support {
   uint32_t authentication_modes = 0;  // Bit positions are AuthMode values.
   bool hidden_networks = false;
@@ -150,6 +159,7 @@ enum class LinkPhase : uint8_t {
   kAssociated,
   kAddressReady
 };
+
 struct LinkState {
   OperationId connection_id = 0;  // The connect operation that established it.
   LinkPhase phase = LinkPhase::kIdle;
@@ -161,7 +171,7 @@ struct LinkState {
   Ipv4Address address, gateway, dns1, dns2;
   bool has_radio_info = false, has_station_mac = false, has_ipv4 = false;
   bool has_dns1 = false, has_dns2 = false;
-  Error reason = Error::kOk;
+  Status reason = Status::kOk;
   int32_t native_code = 0;
   bool has_native_code = false;
 };
@@ -173,14 +183,16 @@ enum class OperationKind : uint8_t {
   kSave,
   kRemove
 };
+
 struct RequestResult {
   OperationId id = 0;  // Zero: rejected, no completion callback.
-  Error error = Error::kOk;
+  Status error = Status::kOk;
 };
+
 struct OperationResult {
   OperationId id = 0;
   OperationKind kind = OperationKind::kScan;
-  Error error = Error::kOk;  // kOk or one terminal failure/cancellation.
+  Status error = Status::kOk;  // kOk or one terminal failure/cancellation.
   ProfileId profile_id = 0;  // Created/saved/removed/connected profile, if any.
   int32_t native_code = 0;
   bool has_native_code = false;
@@ -195,8 +207,13 @@ struct ControllerOptions {
   uint32_t transition_timeout_ms = 5000;
 };
 
-/// Validates portable settings and credential encoding.
-Error Validate(const ConnectionConfig &, const Credentials &);
-/// Checks requested features against the selected radio.
-Error ValidateSupport(const ConnectionConfig &, const Support &);
+/// Validates portable connection settings and credential encoding.
+/// @param config Network and IP settings to validate.
+/// @param credentials Credential material and encoding to validate.
+Status Validate(const ConnectionConfig &config, const Credentials &credentials);
+
+/// Checks that configuration features are available from the selected radio.
+/// @param config Network and IP settings to check.
+/// @param support Supported radio features.
+Status ValidateSupport(const ConnectionConfig &config, const Support &support);
 }  // namespace roo_wifi

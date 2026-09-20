@@ -2,16 +2,19 @@
 #include "roo_wifi/controller.h"
 #include "roo_wifi/hal/esp32/arduino_preferences_store.h"
 #include "roo_wifi/hal/esp32/esp32_arduino_interface.h"
+
 namespace roo_wifi {
-/// Owns dependencies before the controller and destroys the controller first.
+/// Creates a ready-to-use ESP32-backed Wi-Fi controller.
 class Esp32Wifi {
  public:
-  /// Creates the station owner; begin through controller() on scheduler
-  /// context.
+  /// Creates the ESP32 radio and preferences-backed controller.
+  /// @param scheduler Context on which controller calls and callbacks run.
+  /// @param options Capacity, timeout, and startup behavior.
   explicit Esp32Wifi(roo_scheduler::Scheduler &scheduler,
                      ControllerOptions options = {})
       : controller_(interface_, store_, scheduler, options) {}
-  /// Portable facade for all operations and listener registration.
+
+  /// Returns the portable controller facade.
   Controller &controller() { return controller_; }
 
  private:

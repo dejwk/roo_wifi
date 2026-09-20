@@ -4,49 +4,59 @@
 #include "roo_wifi/hal/ordered_interface.h"
 
 namespace roo_wifi {
-/// ESP-IDF station driver with Arduino initialization and exact AP selection.
+/// Drives the ESP32 station through Arduino and ESP-IDF APIs.
 class Esp32Station : public NativeStation {
  public:
-  /// Initializes the adapter and its bounded state.
+  /// Creates an unattached ESP32 station driver.
   Esp32Station() = default;
 
-  /// Implements the inherited Esp32Station contract.
+  /// Detaches the driver from ESP event delivery.
   ~Esp32Station() override;
 
-  /// Implements the inherited attach contract.
-  Error attach(Receiver &) override;
+  /// Registers ESP event handlers for the supplied receiver.
+  /// @param receiver Recipient of translated station events.
+  Status attach(Receiver &receiver) override;
 
-  /// Implements the inherited detach contract.
+  /// Unregisters ESP event handlers and clears active state.
   void detach() override;
 
-  /// Implements the inherited support contract.
+  /// Returns features available from this ESP32 station implementation.
   Support support() const override;
 
-  /// Implements the inherited enable contract.
-  Error enable(bool) override;
+  /// Enables or disables ESP32 station mode.
+  /// @param enabled Desired station mode.
+  Status enable(bool enabled) override;
 
-  /// Implements the inherited scan contract.
-  Error scan(uint16_t) override;
+  /// Starts an ESP32 scan and bounds retained results.
+  /// @param max_results Maximum records to retain.
+  Status scan(uint16_t max_results) override;
 
-  /// Implements the inherited stopScan contract.
-  Error stopScan() override;
+  /// Requests cancellation of the active ESP32 scan.
+  Status stopScan() override;
 
-  /// Implements the inherited connect contract.
-  Error connect(const ConnectionConfig &, const Credentials &) override;
+  /// Selects an exact access point and begins connection.
+  /// @param config Network settings to apply.
+  /// @param credentials Credential material for the attempt.
+  Status connect(const ConnectionConfig &config,
+                 const Credentials &credentials) override;
 
-  /// Implements the inherited continueConnect contract.
-  Error continueConnect() override;
+  /// Connects to the access point selected by the preceding scan.
+  Status continueConnect() override;
 
-  /// Implements the inherited disconnect contract.
-  Error disconnect() override;
+  /// Disconnects the ESP32 station or cancels candidate selection.
+  Status disconnect() override;
 
-  /// Implements the inherited readScan contract.
-  Error readScan(ScanRecord *, size_t, ScanRead &) const override;
+  /// Copies records retained from the last completed scan.
+  /// @param out Destination record array.
+  /// @param capacity Number of records that fit in @p out.
+  /// @param result Receives count and truncation state on success.
+  Status readScan(ScanRecord *out, size_t capacity,
+                  ScanRead &result) const override;
 
  private:
   static void Dispatch(void *, esp_event_base_t, int32_t, void *);
   void event(esp_event_base_t, int32_t, void *);
-  Error startSelected(const wifi_ap_record_t &);
+  Status startSelected(const wifi_ap_record_t &);
   Receiver *receiver_ = nullptr;
   esp_event_handler_instance_t wifi_handler_ = nullptr, ip_handler_ = nullptr;
   mutable roo::mutex mutex_;
@@ -61,14 +71,14 @@ class Esp32Station : public NativeStation {
   uint8_t device_mac_[6] = {};
 };
 
-/// Owns the driver before constructing its portable ordered interface.
+/// Combines an ESP32 station driver with the portable ordered interface.
 class Esp32ArduinoInterface : private Esp32Station, public OrderedInterface {
  public:
-  /// Initializes the adapter and its bounded state.
+  /// Creates the station driver and its ordered interface.
   Esp32ArduinoInterface()
       : OrderedInterface(static_cast<Esp32Station &>(*this)) {}
 
-  /// Implements the inherited Esp32ArduinoInterface contract.
+  /// Shuts down ordered dispatch before destroying the station driver.
   ~Esp32ArduinoInterface() override { OrderedInterface::shutdown(); }
 };
 }  // namespace roo_wifi

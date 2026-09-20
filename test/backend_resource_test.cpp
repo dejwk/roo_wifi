@@ -6,12 +6,15 @@
 
 #include "backend_fakes.h"
 #include "gtest/gtest.h"
+
 namespace {
 std::atomic<size_t> live{0}, peak{0}, allocations{0};
+
 struct alignas(std::max_align_t) Allocation {
   size_t size;
 };
 }  // namespace
+
 void* operator new(size_t size) {
   Allocation* p =
       static_cast<Allocation*>(std::malloc(sizeof(Allocation) + size));
@@ -24,16 +27,22 @@ void* operator new(size_t size) {
   ++allocations;
   return p + 1;
 }
+
 void operator delete(void* data) noexcept {
   if (!data) return;
   Allocation* p = static_cast<Allocation*>(data) - 1;
   live -= p->size;
   std::free(p);
 }
+
 void operator delete(void* data, size_t) noexcept { ::operator delete(data); }
+
 void* operator new[](size_t size) { return ::operator new(size); }
+
 void operator delete[](void* data) noexcept { ::operator delete(data); }
+
 void operator delete[](void* data, size_t) noexcept { ::operator delete(data); }
+
 namespace roo_wifi {
 // Verifies bounded retained allocation across repeated scan/cancel/profile
 // work, and that all observation methods allocate zero bytes at N=0,20,40,100.

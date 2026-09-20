@@ -11,6 +11,7 @@ namespace roo_wifi {
 namespace {
 roo::mutex owner_mutex;
 Esp32Station *owner = nullptr;
+
 AuthMode Auth(wifi_auth_mode_t mode) {
   switch (mode) {
     case WIFI_AUTH_OPEN:
@@ -62,6 +63,7 @@ CipherType Cipher(wifi_cipher_type_t c) {
       return CipherType::kUnknown;
   }
 }
+
 ScanRecord Record(const wifi_ap_record_t &ap) {
   ScanRecord r;
   r.ssid.size = strnlen(reinterpret_cast<const char *>(ap.ssid), 32);
@@ -88,20 +90,22 @@ IPAddress Address(const Ipv4Address &ip) {
   return IPAddress(ip.bytes[0], ip.bytes[1], ip.bytes[2], ip.bytes[3]);
 }
 
-Error Result(esp_err_t code) {
-  return code == ESP_OK ? Error::kOk : Error::kConnectionFailed;
+Status Result(esp_err_t code) {
+  return code == ESP_OK ? Status::kOk : Status::kConnectionFailed;
 }
 }  // namespace
+
 Esp32Station::~Esp32Station() { detach(); }
-Error Esp32Station::attach(Receiver &receiver) {
+
+Status Esp32Station::attach(Receiver &receiver) {
   roo::lock_guard<roo::mutex> lock(owner_mutex);
-  if (owner) return Error::kBusy;
+  if (owner) return Status::kBusy;
   // Arduino creates the default loop on first mode initialization.
   WiFi.persistent(false);
   WiFi.setAutoReconnect(false);
   esp_err_t error = esp_event_loop_create_default();
   if (error != ESP_OK && error != ESP_ERR_INVALID_STATE)
-    return Error::kConnectionFailed;
+    return Status::kConnectionFailed;
   receiver_ = &receiver;
   error = esp_event_handler_instance_register(WIFI_EVENT, ESP_EVENT_ANY_ID,
                                               &Dispatch, this, &wifi_handler_);
@@ -114,10 +118,10 @@ Error Esp32Station::attach(Receiver &receiver) {
                                             wifi_handler_);
     wifi_handler_ = nullptr;
     receiver_ = nullptr;
-    return Error::kConnectionFailed;
+    return Status::kConnectionFailed;
   }
   owner = this;
-  return Error::kOk;
+  return Status::kOk;
 }
 
 void Esp32Station::detach() {
@@ -159,25 +163,25 @@ Support Esp32Station::support() const {
   return s;
 }
 
-Error Esp32Station::enable(bool enabled) {
+Status Esp32Station::enable(bool enabled) {
   if ((WiFi.getMode() == WIFI_STA && enabled) ||
       (WiFi.getMode() == WIFI_OFF && !enabled)) {
     receiver_->post({enabled ? Event::kEnabled : Event::kDisabled});
-    return Error::kOk;
+    return Status::kOk;
   }
   if (!WiFi.mode(enabled ? WIFI_STA : WIFI_OFF))
-    return Error::kConnectionFailed;
+    return Status::kConnectionFailed;
   if (enabled) {
     WiFi.setAutoReconnect(false);
     if (!device_mac_[0] && !device_mac_[1])
       esp_wifi_get_mac(WIFI_IF_STA, device_mac_);
   }
-  return Error::kOk;
+  return Status::kOk;
 }
 
-Error Esp32Station::scan(uint16_t capacity) {
+Status Esp32Station::scan(uint16_t capacity) {
   roo::unique_lock<roo::mutex> lock(mutex_);
-  if (selecting_ || scan_active_) return Error::kBusy;
+  if (selecting_ || scan_active_) return Status::kBusy;
   capacity_ = capacity;
   records_.reserve(capacity);
   scan_cancelled_ = false;
@@ -193,21 +197,21 @@ Error Esp32Station::scan(uint16_t capacity) {
   return Result(error);
 }
 
-Error Esp32Station::stopScan() {
+Status Esp32Station::stopScan() {
   roo::unique_lock<roo::mutex> lock(mutex_);
   scan_cancelled_ = true;
   lock.unlock();
-  Error error = Result(esp_wifi_scan_stop());
+  Status error = Result(esp_wifi_scan_stop());
   return error;
 }
 
-Error Esp32Station::connect(const ConnectionConfig &config,
-                            const Credentials &secret) {
+Status Esp32Station::connect(const ConnectionConfig &config,
+                             const Credentials &secret) {
   roo::unique_lock<roo::mutex> lock(mutex_);
-  if (selecting_ || scan_active_) return Error::kBusy;
+  if (selecting_ || scan_active_) return Status::kBusy;
   // IDF's SSID filter is a C string, so reject unrepresentable byte SSIDs.
   if (memchr(config.ssid.bytes, 0, config.ssid.size))
-    return Error::kUnsupported;
+    return Status::kUnsupported;
   config_ = config;
   secret_ = secret;
   uint8_t ssid[33] = {};
@@ -227,26 +231,26 @@ Error Esp32Station::connect(const ConnectionConfig &config,
   return Result(error);
 }
 
-Error Esp32Station::continueConnect() {
+Status Esp32Station::continueConnect() {
   {
     roo::lock_guard<roo::mutex> lock(mutex_);
-    if (!prepared_) return Error::kNotFound;
+    if (!prepared_) return Status::kNotFound;
     prepared_ = false;
   }
   return startSelected(selected_);
 }
 
-Error Esp32Station::disconnect() {
+Status Esp32Station::disconnect() {
   roo::unique_lock<roo::mutex> lock(mutex_);
   if (prepared_) {
     prepared_ = false;
     secret_ = {};
-    return Error::kNotFound;
+    return Status::kNotFound;
   }
   if (selecting_) {
     scan_cancelled_ = true;
     lock.unlock();
-    Error error = Result(esp_wifi_scan_stop());
+    Status error = Result(esp_wifi_scan_stop());
     return error;
   }
   // The ordered layer synthesizes idle only when it already knows no attempt
@@ -255,16 +259,16 @@ Error Esp32Station::disconnect() {
   return Result(esp_wifi_disconnect());
 }
 
-Error Esp32Station::readScan(ScanRecord *out, size_t capacity,
-                             ScanRead &result) const {
+Status Esp32Station::readScan(ScanRecord *out, size_t capacity,
+                              ScanRead &result) const {
   roo::unique_lock<roo::mutex> lock(mutex_);
   size_t count = std::min(capacity, records_.size());
   std::copy_n(records_.begin(), count, out);
   result = {count, truncated_ || count < records_.size()};
-  return Error::kOk;
+  return Status::kOk;
 }
 
-Error Esp32Station::startSelected(const wifi_ap_record_t &ap) {
+Status Esp32Station::startSelected(const wifi_ap_record_t &ap) {
   uint8_t mac[6];
   memcpy(mac, device_mac_, 6);
   if (config_.mac_policy == MacPolicy::kRandomized) {
@@ -272,12 +276,12 @@ Error Esp32Station::startSelected(const wifi_ap_record_t &ap) {
     mac[0] = (mac[0] & 0xfe) | 0x02;
   }
   if (esp_wifi_set_mac(WIFI_IF_STA, mac) != ESP_OK)
-    return Error::kConnectionFailed;
+    return Status::kConnectionFailed;
   esp_netif_t *netif = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
-  if (!netif) return Error::kConnectionFailed;
+  if (!netif) return Status::kConnectionFailed;
   esp_err_t status = esp_netif_dhcpc_stop(netif);
   if (status != ESP_OK && status != ESP_ERR_ESP_NETIF_DHCP_ALREADY_STOPPED)
-    return Error::kConnectionFailed;
+    return Status::kConnectionFailed;
   esp_netif_ip_info_t ip = {};
   esp_netif_dns_info_t dns1 = {}, dns2 = {};
   dns1.ip.type = dns2.ip.type = ESP_IPADDR_TYPE_V4;
@@ -295,11 +299,11 @@ Error Esp32Station::startSelected(const wifi_ap_record_t &ap) {
   if (esp_netif_set_ip_info(netif, &ip) != ESP_OK ||
       esp_netif_set_dns_info(netif, ESP_NETIF_DNS_MAIN, &dns1) != ESP_OK ||
       esp_netif_set_dns_info(netif, ESP_NETIF_DNS_BACKUP, &dns2) != ESP_OK)
-    return Error::kConnectionFailed;
+    return Status::kConnectionFailed;
   if (config_.ip_mode == IpMode::kDhcp) {
     status = esp_netif_dhcpc_start(netif);
     if (status != ESP_OK && status != ESP_ERR_ESP_NETIF_DHCP_ALREADY_STARTED)
-      return Error::kConnectionFailed;
+      return Status::kConnectionFailed;
   }
   wifi_config_t config = {};
   memcpy(config.sta.ssid, config_.ssid.bytes, config_.ssid.size);
@@ -310,9 +314,9 @@ Error Esp32Station::startSelected(const wifi_ap_record_t &ap) {
   config.sta.threshold.authmode = ap.authmode;
   config.sta.pmf_cfg.capable = true;
   config.sta.pmf_cfg.required = config_.security == AuthMode::kWpa3Personal;
-  Error error = Result(esp_wifi_set_config(WIFI_IF_STA, &config));
+  Status error = Result(esp_wifi_set_config(WIFI_IF_STA, &config));
   secret_ = {};
-  return error == Error::kOk ? Result(esp_wifi_connect()) : error;
+  return error == Status::kOk ? Result(esp_wifi_connect()) : error;
 }
 
 void Esp32Station::Dispatch(void *context, esp_event_base_t base, int32_t id,
@@ -345,12 +349,12 @@ void Esp32Station::event(esp_event_base_t base, int32_t id, void *data) {
         uint16_t fetched = std::max<uint16_t>(count, 1);
         esp_err_t error = esp_wifi_scan_get_ap_records(&fetched, aps.data());
         event.error = done.status == 0 && error == ESP_OK
-                          ? Error::kOk
-                          : Error::kConnectionFailed;
+                          ? Status::kOk
+                          : Status::kConnectionFailed;
         event.native_code = done.status ? done.status : error;
         if (selecting_) {
           selecting_ = false;
-          if (!scan_cancelled_ && event.error == Error::kOk) {
+          if (!scan_cancelled_ && event.error == Status::kOk) {
             for (size_t i = 0; i < fetched; ++i) {
               if (Auth(aps[i].authmode) != config_.security) continue;
               selected_ = aps[i];
@@ -362,11 +366,11 @@ void Esp32Station::event(esp_event_base_t base, int32_t id, void *data) {
           secret_ = {};
           event.kind = Event::kDisconnected;
           event.link.ssid = config_.ssid;
-          event.error = Error::kConnectionFailed;
+          event.error = Status::kConnectionFailed;
         } else {
           scan_active_ = false;
           event.kind = Event::kScanDone;
-          if (event.error == Error::kOk && !scan_cancelled_) {
+          if (event.error == Status::kOk && !scan_cancelled_) {
             records_.clear();
             for (size_t i = 0; i < std::min<size_t>(fetched, capacity_); ++i)
               records_.push_back(Record(aps[i]));
@@ -408,7 +412,7 @@ void Esp32Station::event(esp_event_base_t base, int32_t id, void *data) {
         memcpy(event.link.ssid.bytes, info.ssid, event.link.ssid.size);
         memcpy(event.link.bssid.bytes, info.bssid, 6);
         event.native_code = info.reason;
-        event.error = Error::kConnectionFailed;
+        event.error = Status::kConnectionFailed;
         break;
       }
       default:

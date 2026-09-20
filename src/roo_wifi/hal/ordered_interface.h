@@ -6,13 +6,12 @@
 #include "roo_wifi/hal/interface.h"
 
 namespace roo_wifi {
-/// Native station commands used by the ordered adapter and its test harness.
+/// Defines native station commands consumed by the ordered radio adapter.
 /// A successful asynchronous command posts a corresponding event. Already-idle
 /// disconnect returns NotFound. A driver must not independently reconnect.
 class NativeStation {
  public:
-  /// Copied native event payload; interface/IP identity is checked by the
-  /// driver.
+  /// Carries a copied native station event to the ordered adapter.
   struct Event {
     enum Kind {
       kEnabled,
@@ -24,48 +23,65 @@ class NativeStation {
       kScanDone,
       kPrepared
     } kind;
+
     LinkState link;
-    Error error = Error::kOk;
+    Status error = Status::kOk;
     int32_t native_code = 0;
   };
+
   /// Receives native events in posting order, potentially from another thread.
   class Receiver {
    public:
-    /// Initializes the adapter and its bounded state.
+    /// Destroys a receiver after the station has detached it.
     virtual ~Receiver() = default;
 
-    /// Initializes the adapter and its bounded state.
+    /// Queues a native event for ordered processing.
+    /// @param event Native event payload to copy.
     virtual void post(const Event &event) = 0;
   };
 
-  /// Initializes the adapter and its bounded state.
+  /// Destroys a detached native station.
   virtual ~NativeStation() = default;
-  /// Attaches the sole station owner, without starting a connection.
-  virtual Error attach(Receiver &) = 0;
-  /// Detaches and waits for callbacks to return.
+
+  /// Attaches the sole event receiver without starting a connection.
+  /// @param receiver Receiver that remains valid until detach returns.
+  virtual Status attach(Receiver &receiver) = 0;
+
+  /// Detaches the receiver and waits for in-flight callbacks to return.
   virtual void detach() = 0;
 
-  /// Initializes the adapter and its bounded state.
+  /// Reports the features supported by the native station.
   virtual Support support() const = 0;
 
-  /// Initializes the adapter and its bounded state.
-  virtual Error enable(bool) = 0;
+  /// Changes the physical station enablement.
+  /// @param enabled Desired physical station state.
+  virtual Status enable(bool enabled) = 0;
 
-  /// Initializes the adapter and its bounded state.
-  virtual Error scan(uint16_t) = 0;
+  /// Starts a network scan with bounded retained results.
+  /// @param max_results Maximum records to retain.
+  virtual Status scan(uint16_t max_results) = 0;
 
-  /// Initializes the adapter and its bounded state.
-  virtual Error stopScan() = 0;
+  /// Requests cancellation of the native scan.
+  virtual Status stopScan() = 0;
 
-  /// Initializes the adapter and its bounded state.
-  virtual Error connect(const ConnectionConfig &, const Credentials &) = 0;
+  /// Begins selection and connection to a network.
+  /// @param config Network settings to apply.
+  /// @param credentials Credential material for the attempt.
+  virtual Status connect(const ConnectionConfig &config,
+                         const Credentials &credentials) = 0;
+
   /// Continues an asynchronously prepared connection on scheduler context.
-  virtual Error continueConnect() = 0;
+  virtual Status continueConnect() = 0;
 
-  /// Initializes the adapter and its bounded state.
-  virtual Error disconnect() = 0;
-  /// Called after scan completion; leaves out unchanged on failure.
-  virtual Error readScan(ScanRecord *, size_t, ScanRead &) const = 0;
+  /// Starts physical disconnection from the active network.
+  virtual Status disconnect() = 0;
+
+  /// Copies records from a completed scan.
+  /// @param out Destination record array.
+  /// @param capacity Number of records that fit in @p out.
+  /// @param result Receives count and truncation state on success.
+  virtual Status readScan(ScanRecord *out, size_t capacity,
+                          ScanRead &result) const = 0;
 };
 
 /// Preserves one native FIFO and sequences switches through disconnect
@@ -74,35 +90,54 @@ class NativeStation {
 /// use scheduler context.
 class OrderedInterface : public Interface, private NativeStation::Receiver {
  public:
+  /// Creates an adapter that serializes commands for one native station.
+  /// @param native Station that outlives this adapter.
   explicit OrderedInterface(NativeStation &native);
 
-  /// Implements the inherited OrderedInterface contract.
+  /// Shuts down the adapter and detaches its native station.
   ~OrderedInterface() override;
 
-  /// Implements the inherited begin contract.
-  Error begin(Sink &, roo_scheduler::Scheduler &) override;
+  /// Attaches an event sink and creates deferred dispatch work.
+  /// @param sink Controller event recipient.
+  /// @param scheduler Context used for deferred dispatch.
+  Status begin(Sink &sink, roo_scheduler::Scheduler &scheduler) override;
 
-  /// Implements the inherited support contract.
+  /// Returns the native station's supported features.
   Support support() const override;
 
-  /// Implements the inherited setEnabled contract.
-  Error setEnabled(OperationId, bool) override;
+  /// Starts a radio enablement operation.
+  /// @param id Operation ID to complete.
+  /// @param enabled Desired physical radio state.
+  Status setEnabled(OperationId id, bool enabled) override;
 
-  /// Implements the inherited scan contract.
-  Error scan(OperationId, uint16_t) override;
-  Error connect(OperationId, const ConnectionConfig &,
-                const Credentials &) override;
+  /// Starts a bounded scan operation.
+  /// @param id Operation ID to complete.
+  /// @param max_results Maximum records to retain.
+  Status scan(OperationId id, uint16_t max_results) override;
 
-  /// Implements the inherited disconnect contract.
-  Error disconnect(OperationId) override;
+  /// Starts a connection operation.
+  /// @param id Operation ID to complete.
+  /// @param config Network settings to copy.
+  /// @param credentials Credential material to copy.
+  Status connect(OperationId id, const ConnectionConfig &config,
+                 const Credentials &credentials) override;
 
-  /// Implements the inherited cancel contract.
-  Error cancel(OperationId) override;
+  /// Starts a disconnect operation.
+  /// @param id Operation ID to complete.
+  Status disconnect(OperationId id) override;
 
-  /// Implements the inherited readScanResults contract.
-  Error readScanResults(ScanRecord *, size_t, ScanRead &) const override;
+  /// Cancels a pending station or scan operation.
+  /// @param id Operation ID to cancel.
+  Status cancel(OperationId id) override;
 
-  /// Implements the inherited shutdown contract.
+  /// Copies results from the most recent completed scan.
+  /// @param out Destination record array.
+  /// @param capacity Number of records that fit in @p out.
+  /// @param result Receives count and truncation state on success.
+  Status readScanResults(ScanRecord *out, size_t capacity,
+                         ScanRead &result) const override;
+
+  /// Detaches native callbacks and clears queued work.
   void shutdown() override;
 
  private:
@@ -110,9 +145,9 @@ class OrderedInterface : public Interface, private NativeStation::Receiver {
   void drain();
   void process(const NativeStation::Event &);
   void startConnection();
-  void finishStation(Error, int32_t = 0);
-  void finishScan(Error, int32_t = 0);
-  Error stationAdmission(OperationId) const;
+  void finishStation(Status, int32_t = 0);
+  void finishScan(Status, int32_t = 0);
+  Status stationAdmission(OperationId) const;
   NativeStation &native_;
   Sink *sink_ = nullptr;
   std::unique_ptr<roo_scheduler::SingletonTask> dispatch_;

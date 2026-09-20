@@ -449,7 +449,7 @@ using ProfileId = uint32_t;  // Caller-assigned key; zero means no profile.
 using OperationId =
     uint64_t;  // Nonzero, never reused within a controller lifetime.
 
-enum class Error : uint8_t {
+enum class Status : uint8_t {
   kOk,
   kNotFound,
   kInvalidArgument,
@@ -535,7 +535,7 @@ struct Profile {
 };
 
 struct SaveResult {
-  Error error = Error::kOk;
+  Status error = Status::kOk;
   ProfileId id = 0;
 };
 
@@ -544,16 +544,16 @@ struct SaveResult {
 class Store {
  public:
   virtual ~Store() = default;
-  virtual Error begin() = 0;
-  virtual Error loadProfile(ProfileId id, Profile& out) const = 0;
+  virtual Status begin() = 0;
+  virtual Status loadProfile(ProfileId id, Profile& out) const = 0;
   /// Privileged backend access, used only to construct connection input.
-  virtual Error loadCredentials(ProfileId id, Credentials& out) const = 0;
+  virtual Status loadCredentials(ProfileId id, Credentials& out) const = 0;
   /// Create or replace a known nonzero key; kKeep requires a valid old profile.
   virtual SaveResult saveProfile(ProfileId id, const ProfileSettings& settings,
                                  const CredentialUpdate& credential) = 0;
-  virtual Error removeProfile(ProfileId id) = 0;
-  virtual Error readEnabled(bool& out) const = 0;
-  virtual Error writeEnabled(bool enabled) = 0;
+  virtual Status removeProfile(ProfileId id) = 0;
+  virtual Status readEnabled(bool& out) const = 0;
+  virtual Status writeEnabled(bool enabled) = 0;
 };
 
 struct ScanRecord {
@@ -599,7 +599,7 @@ struct LinkState {
   Ipv4Address address, gateway, dns1, dns2;
   bool has_radio_info = false, has_station_mac = false, has_ipv4 = false;
   bool has_dns1 = false, has_dns2 = false;
-  Error reason = Error::kOk;
+  Status reason = Status::kOk;
 };
 enum class OperationKind : uint8_t {
   kEnable,
@@ -611,12 +611,12 @@ enum class OperationKind : uint8_t {
 };
 struct RequestResult {
   OperationId id = 0;  // Zero: rejected, no completion callback.
-  Error error = Error::kOk;
+  Status error = Status::kOk;
 };
 struct OperationResult {
   OperationId id = 0;
   OperationKind kind = OperationKind::kScan;
-  Error error = Error::kOk;  // kOk or one terminal failure/cancellation.
+  Status error = Status::kOk;  // kOk or one terminal failure/cancellation.
   ProfileId profile_id = 0;  // Created/saved/removed/connected profile, if any.
   int32_t native_code = 0;
   bool has_native_code = false;
@@ -633,19 +633,19 @@ class Interface {
     virtual void onEnabledChanged(bool enabled) = 0;
   };
   virtual ~Interface() = default;
-  virtual Error begin(Sink& sink, roo_scheduler::Scheduler& scheduler) = 0;
+  virtual Status begin(Sink& sink, roo_scheduler::Scheduler& scheduler) = 0;
   virtual Support support() const = 0;
   /// kOk means admitted; completion is deferred and echoes the supplied ID.
-  virtual Error setEnabled(OperationId id, bool enabled) = 0;
-  virtual Error scan(OperationId id, uint16_t max_results) = 0;
-  virtual Error connect(OperationId id, const ConnectionConfig& config,
+  virtual Status setEnabled(OperationId id, bool enabled) = 0;
+  virtual Status scan(OperationId id, uint16_t max_results) = 0;
+  virtual Status connect(OperationId id, const ConnectionConfig& config,
                         const Credentials& credentials) = 0;
-  virtual Error disconnect(OperationId id) = 0;
+  virtual Status disconnect(OperationId id) = 0;
   /// Accepted cancellation completes the target ID with kCancelled, not a new
   /// ID.
-  virtual Error cancel(OperationId target) = 0;
+  virtual Status cancel(OperationId target) = 0;
   /// Read during successful scan completion; copies at most capacity records.
-  virtual Error readScanResults(ScanRecord* out, size_t capacity,
+  virtual Status readScanResults(ScanRecord* out, size_t capacity,
                                 ScanRead& result) const = 0;
   /// Detaches the sink and prevents subsequent delivery, including queued
   /// events.
@@ -679,7 +679,7 @@ class Controller {
   ~Controller();
   Controller(const Controller&) = delete;
   Controller& operator=(const Controller&) = delete;
-  Error begin();
+  Status begin();
   void shutdown();
   void addListener(Listener& listener);
   void removeListener(Listener& listener);
@@ -688,14 +688,14 @@ class Controller {
   bool isScanning() const;
   ScanSnapshot scanSnapshot() const;
   LinkState linkState() const;
-  Error loadProfile(ProfileId id, Profile& out) const;
+  Status loadProfile(ProfileId id, Profile& out) const;
   RequestResult setEnabled(bool enabled);
   RequestResult scan();
   RequestResult connect(const ConnectionConfig& config,
                         const Credentials& credential);
   RequestResult connect(ProfileId id);
   RequestResult disconnect();
-  Error cancel(OperationId target);
+  Status cancel(OperationId target);
   RequestResult saveProfile(ProfileId id,
                             const ProfileSettings& settings,
                             const CredentialUpdate& credential);
@@ -808,7 +808,7 @@ class Provisioner final : public roo_wifi::Controller::Listener {
     if (result.id == save_id_) {
       save_id_ = 0;
       error_ = result.error;
-      if (result.error != roo_wifi::Error::kOk) return;
+      if (result.error != roo_wifi::Status::kOk) return;
       profile_id_ = result.profile_id;
       // Admission is safe in a callback: execution and completion are deferred.
       roo_wifi::RequestResult connect = wifi_.connect(profile_id_);
@@ -817,7 +817,7 @@ class Provisioner final : public roo_wifi::Controller::Listener {
     } else if (result.id == connect_id_) {
       connect_id_ = 0;
       error_ = result.error;
-      ready_ = result.error == roo_wifi::Error::kOk;
+      ready_ = result.error == roo_wifi::Status::kOk;
     }
   }
 
@@ -825,7 +825,7 @@ class Provisioner final : public roo_wifi::Controller::Listener {
   roo_wifi::Controller& wifi_;
   roo_wifi::OperationId save_id_ = 0, connect_id_ = 0;
   roo_wifi::ProfileId profile_id_ = 0;
-  roo_wifi::Error error_ = roo_wifi::Error::kOk;
+  roo_wifi::Status error_ = roo_wifi::Status::kOk;
   bool ready_ = false;  // Initial address readiness, not internet reachability.
 };
 

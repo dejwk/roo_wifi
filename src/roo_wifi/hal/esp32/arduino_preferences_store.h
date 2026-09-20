@@ -1,31 +1,39 @@
 #pragma once
 #include "roo_prefs.h"
 #include "roo_wifi/hal/field_store.h"
+
 namespace roo_wifi {
-/// Known-key Wi-Fi profiles using small, individually committed preferences.
+/// Stores known-key Wi-Fi profiles in Arduino Preferences.
 class ArduinoPreferencesStore : public FieldStore {
  public:
-  /// Initializes the adapter and its bounded state.
+  /// Creates a Preferences-backed profile store.
   ArduinoPreferencesStore();
 
-  /// Implements the inherited begin contract.
-  Error begin() override;
+  /// Opens the Preferences collection for subsequent operations.
+  Status begin() override;
 
-  /// Implements the inherited readEnabled contract.
-  Error readEnabled(bool &) const override;
+  /// Reads persisted radio enablement from Preferences.
+  /// @param enabled Receives the stored value on success.
+  Status readEnabled(bool &enabled) const override;
 
-  /// Implements the inherited writeEnabled contract.
-  Error writeEnabled(bool) override;
-  /// Imports only the supplied legacy SSID into a supplied application key.
+  /// Persists radio enablement in Preferences.
+  /// @param enabled Value to persist.
+  Status writeEnabled(bool enabled) override;
+
+  /// Imports one legacy SSID/profile into an application profile key.
   /// Security/settings are explicit; legacy preferences remain untouched.
-  SaveResult importLegacy(ProfileId, const ProfileSettings &);
+  /// @param id Nonzero destination profile key.
+  /// @param settings Settings paired with the legacy credentials.
+  SaveResult importLegacy(ProfileId id, const ProfileSettings &settings);
+
   /// Reads the legacy default SSID without importing it.
-  Error readLegacyDefault(Ssid &) const;
+  /// @param out Receives the SSID on success and is unchanged on failure.
+  Status readLegacyDefault(Ssid &out) const;
 
  protected:
-  Error readField(const char *, uint8_t *, size_t &) const override;
-  Error writeField(const char *, const uint8_t *, size_t) override;
-  Error eraseField(const char *) override;
+  Status readField(const char *, uint8_t *, size_t &) const override;
+  Status writeField(const char *, const uint8_t *, size_t) override;
+  Status eraseField(const char *) override;
 
  private:
   mutable roo_prefs::Collection collection_;
