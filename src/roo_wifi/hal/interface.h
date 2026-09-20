@@ -1,5 +1,9 @@
 #pragma once
-#include "roo_wifi/types.h"
+#include <stddef.h>
+
+#include "roo_wifi/configuration.h"
+#include "roo_wifi/operation.h"
+#include "roo_wifi/radio.h"
 
 namespace roo_scheduler {
 class Scheduler;
@@ -14,6 +18,15 @@ namespace roo_wifi {
 /// shutdown detaches producers and neutralizes queued work before returning.
 class Interface {
  public:
+  /// Reports the number of scan records copied by a radio adapter.
+  struct ScanRead {
+    /// Number of records copied into caller storage.
+    size_t count = 0;
+
+    /// Whether records were omitted because storage was bounded.
+    bool truncated = false;
+  };
+
   /// Receives radio events serialized onto the supplied scheduler context.
   class Sink {
    public:

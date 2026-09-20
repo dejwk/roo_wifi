@@ -26,7 +26,7 @@ class BackendTest : public testing::Test {
 // readiness.
 TEST_F(BackendTest, OwnedInputAndAddressReadiness) {
   ConnectionConfig c = TestConfig();
-  RequestResult r = controller.connect(c, {});
+  Controller::RequestResult r = controller.connect(c, {});
   ASSERT_NE(r.id, 0u);
   c.ssid.bytes[0] = 'X';
   EXPECT_TRUE(observer.results.empty());
@@ -48,12 +48,12 @@ TEST_F(BackendTest, OwnedInputAndAddressReadiness) {
 
 // Verifies switching processes A's queued disconnect before starting B.
 TEST_F(BackendTest, OrderedSwitchWithDelayedDispatch) {
-  RequestResult a = controller.connect(TestConfig("A"), {});
+  Controller::RequestResult a = controller.connect(TestConfig("A"), {});
   Pump(scheduler);
   native.associated();
   native.ready();
   Pump(scheduler);
-  RequestResult b = controller.connect(TestConfig("B"), {});
+  Controller::RequestResult b = controller.connect(TestConfig("B"), {});
   Pump(scheduler);
   EXPECT_EQ(native.connects, 1);
   EXPECT_EQ(native.disconnects, 1);
@@ -73,7 +73,7 @@ TEST_F(BackendTest, OrderedSwitchWithDelayedDispatch) {
 
 // Verifies cancellation waits for the native lifecycle before allowing a retry.
 TEST_F(BackendTest, CancelBeforeAssociationAndSameSsidRetry) {
-  RequestResult a = controller.connect(TestConfig(), {});
+  Controller::RequestResult a = controller.connect(TestConfig(), {});
   Pump(scheduler);
   EXPECT_EQ(controller.cancel(a.id), Status::kOk);
   EXPECT_EQ(controller.connect(TestConfig(), {}).error, Status::kBusy);
@@ -83,7 +83,7 @@ TEST_F(BackendTest, CancelBeforeAssociationAndSameSsidRetry) {
   Pump(scheduler);
   ASSERT_EQ(observer.results.size(), 1u);
   EXPECT_EQ(observer.results[0].error, Status::kCancelled);
-  RequestResult b = controller.connect(TestConfig(), {});
+  Controller::RequestResult b = controller.connect(TestConfig(), {});
   EXPECT_NE(b.id, a.id);
   Pump(scheduler);
   native.associated();
@@ -97,12 +97,12 @@ TEST_F(BackendTest, CancelBeforeAssociationAndSameSsidRetry) {
 // Verifies profile work is independent of radio work and cancellation is
 // deferred.
 TEST_F(BackendTest, IndependentSlotsAndCancelledSave) {
-  RequestResult scan = controller.scan();
+  Controller::RequestResult scan = controller.scan();
   ProfileSettings p;
   p.connection = TestConfig();
   CredentialUpdate u;
   u.intent = CredentialIntent::kClear;
-  RequestResult save = controller.saveProfile(42, p, u);
+  Controller::RequestResult save = controller.saveProfile(42, p, u);
   ASSERT_NE(save.id, 0u);
   ASSERT_NE(scan.id, 0u);
   EXPECT_EQ(controller.cancel(save.id), Status::kOk);
@@ -121,14 +121,14 @@ TEST_F(BackendTest, SnapshotLifetimeAndMetadata) {
   record.security = AuthMode::kEnterprise;
   record.bssid.bytes[5] = 42;
   native.aps.push_back(record);
-  RequestResult a = controller.scan();
+  Controller::RequestResult a = controller.scan();
   Pump(scheduler);
   native.emit({NativeStation::Event::kScanDone});
   Pump(scheduler);
-  ScanSnapshot snapshot = controller.scanSnapshot();
+  Controller::ScanSnapshot snapshot = controller.scanSnapshot();
   ASSERT_EQ(snapshot.count, 1u);
   EXPECT_EQ(snapshot.records[0].security, AuthMode::kEnterprise);
-  RequestResult b = controller.scan();
+  Controller::RequestResult b = controller.scan();
   Pump(scheduler);
   NativeStation::Event event{};
   event.kind = NativeStation::Event::kScanDone;
@@ -143,7 +143,7 @@ TEST_F(BackendTest, SnapshotLifetimeAndMetadata) {
 // Verifies explicit shutdown settles public work and queued native delivery is
 // inert.
 TEST_F(BackendTest, ShutdownNeutralizesQueuedEvents) {
-  RequestResult r = controller.connect(TestConfig(), {});
+  Controller::RequestResult r = controller.connect(TestConfig(), {});
   Pump(scheduler);
   native.associated();
   controller.shutdown();
@@ -157,7 +157,7 @@ TEST_F(BackendTest, ShutdownNeutralizesQueuedEvents) {
 // Verifies actual physical state remains observable after persistence failure.
 TEST_F(BackendTest, EnablePersistenceFailure) {
   store.enabled_error = Status::kStorageFailure;
-  RequestResult r = controller.setEnabled(false);
+  Controller::RequestResult r = controller.setEnabled(false);
   Pump(scheduler);
   EXPECT_FALSE(controller.isEnabled());
   ASSERT_EQ(observer.results.size(), 1u);
@@ -184,20 +184,20 @@ TEST(StoreTest, EveryInterruptedWriteAndRepair) {
   u.intent = CredentialIntent::kClear;
   for (int failure = 1; failure <= 16; ++failure) {
     MemoryStore store;
-    ASSERT_EQ(store.saveProfile(1, p, u).error, Status::kOk);
+    ASSERT_EQ(store.saveProfile(1, p, u), Status::kOk);
     store.fail_at = store.writes + failure;
     p.connection.hidden = true;
-    SaveResult result = store.saveProfile(1, p, u);
-    EXPECT_NE(result.error, Status::kOk);
+    Status result = store.saveProfile(1, p, u);
+    EXPECT_NE(result, Status::kOk);
     Profile out;
     Status read = store.loadProfile(1, out);
     EXPECT_EQ(read, failure == 1 ? Status::kOk : Status::kIncomplete);
     if (failure != 1) {
       CredentialUpdate keep;
-      EXPECT_NE(store.saveProfile(1, p, keep).error, Status::kOk);
+      EXPECT_NE(store.saveProfile(1, p, keep), Status::kOk);
     }
     store.fail_at = -1;
-    EXPECT_EQ(store.saveProfile(1, p, u).error, Status::kOk);
+    EXPECT_EQ(store.saveProfile(1, p, u), Status::kOk);
     EXPECT_EQ(store.loadProfile(1, out), Status::kOk);
     EXPECT_TRUE(out.settings.connection.hidden);
   }
@@ -211,7 +211,7 @@ TEST(StoreTest, FailedDeleteCleanupAndRetry) {
   p.connection = TestConfig();
   CredentialUpdate u;
   u.intent = CredentialIntent::kClear;
-  ASSERT_EQ(store.saveProfile(7, p, u).error, Status::kOk);
+  ASSERT_EQ(store.saveProfile(7, p, u), Status::kOk);
   store.fail_at = store.writes + 2;
   EXPECT_EQ(store.removeProfile(7), Status::kStorageFailure);
   Profile out;
@@ -232,16 +232,16 @@ TEST(StoreTest, ExplicitCredentialIntent) {
   u.intent = CredentialIntent::kReplace;
   u.replacement.size = 8;
   memcpy(u.replacement.bytes, "password", 8);
-  ASSERT_EQ(store.saveProfile(9, p, u).error, Status::kOk);
+  ASSERT_EQ(store.saveProfile(9, p, u), Status::kOk);
   u.intent = CredentialIntent::kKeep;
   p.connection.hidden = true;
-  EXPECT_EQ(store.saveProfile(9, p, u).error, Status::kOk);
+  EXPECT_EQ(store.saveProfile(9, p, u), Status::kOk);
   Credentials c;
   EXPECT_EQ(store.loadCredentials(9, c), Status::kOk);
   EXPECT_EQ(c.size, 8u);
   u.intent = CredentialIntent::kClear;
   u.replacement = {};
-  EXPECT_EQ(store.saveProfile(9, p, u).error, Status::kInvalidArgument);
+  EXPECT_EQ(store.saveProfile(9, p, u), Status::kInvalidArgument);
 }
 
 // Verifies static IPv4 and security values are validated independently of a UI.
@@ -270,7 +270,7 @@ TEST(TimeoutTest, UnsettledNativeWorkCannotOverlapNewAttempt) {
   OrderedInterface radio(native);
   MemoryStore store;
   store.enabled = true;
-  ControllerOptions options;
+  Controller::Options options;
   options.connect_timeout_ms = 1;
   options.transition_timeout_ms = 1;
   Controller controller(radio, store, scheduler, options);
@@ -279,7 +279,7 @@ TEST(TimeoutTest, UnsettledNativeWorkCannotOverlapNewAttempt) {
   controller.begin();
   Pump(scheduler);
   observer.results.clear();
-  RequestResult request = controller.connect(TestConfig(), {});
+  Controller::RequestResult request = controller.connect(TestConfig(), {});
   Pump(scheduler);
   scheduler.delay(roo_time::Millis(6));
   Pump(scheduler);
@@ -310,7 +310,7 @@ TEST(StartupTest, KnownProfileAndAdmissionSnapshot) {
   settings.connection = TestConfig("saved");
   CredentialUpdate update;
   update.intent = CredentialIntent::kClear;
-  ControllerOptions options;
+  Controller::Options options;
   options.startup_profile = 1;
   Controller controller(radio, store, scheduler, options);
   ASSERT_EQ(controller.begin(), Status::kOk);
@@ -338,7 +338,7 @@ TEST_F(BackendTest, SavedProfileSurvivesNativeRejection) {
   controller.saveProfile(1, settings, update);
   Pump(scheduler);
   native.rejection = Status::kConnectionFailed;
-  RequestResult request = controller.connect(1);
+  Controller::RequestResult request = controller.connect(1);
   Pump(scheduler);
   EXPECT_EQ(observer.results.back().id, request.id);
   EXPECT_EQ(observer.results.back().error, Status::kConnectionFailed);
@@ -349,7 +349,7 @@ TEST_F(BackendTest, SavedProfileSurvivesNativeRejection) {
 // Verifies cancellation before queued native execution emits one result and no
 // connection.
 TEST_F(BackendTest, CancelBeforeNativeStart) {
-  RequestResult request = controller.connect(TestConfig(), {});
+  Controller::RequestResult request = controller.connect(TestConfig(), {});
   EXPECT_EQ(controller.cancel(request.id), Status::kOk);
   Pump(scheduler);
   EXPECT_EQ(native.connects, 0);
@@ -360,7 +360,7 @@ TEST_F(BackendTest, CancelBeforeNativeStart) {
 // Verifies bounded event overflow faults radio admission instead of reusing
 // lost identity.
 TEST_F(BackendTest, NativeHandoffOverflowFailsClosed) {
-  RequestResult request = controller.scan();
+  Controller::RequestResult request = controller.scan();
   Pump(scheduler);
   for (int i = 0; i < 20; ++i) native.emit({NativeStation::Event::kScanDone});
   Pump(scheduler);
@@ -403,9 +403,9 @@ TEST(StoreTest, FinalCommitVerification) {
   settings.connection = TestConfig();
   CredentialUpdate update;
   update.intent = CredentialIntent::kClear;
-  EXPECT_EQ(store.saveProfile(1, settings, update).error, Status::kOk);
+  EXPECT_EQ(store.saveProfile(1, settings, update), Status::kOk);
   store.unreadable = true;
-  EXPECT_EQ(store.saveProfile(1, settings, update).error,
+  EXPECT_EQ(store.saveProfile(1, settings, update),
             Status::kCommitUnknown);
   Profile untouched;
   untouched.id = 99;

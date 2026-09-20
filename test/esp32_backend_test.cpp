@@ -54,7 +54,7 @@ TEST(Esp32BackendTest, SecuritySelectionAndSwitch) {
   Credentials secret;
   secret.size = 8;
   memcpy(secret.bytes, "password", 8);
-  RequestResult secure_request = controller.connect(config, secret);
+  Controller::RequestResult secure_request = controller.connect(config, secret);
   ASSERT_NE(secure_request.id, 0u);
   RunBackend(scheduler);
   ASSERT_FALSE(observer.results.empty());
@@ -67,7 +67,7 @@ TEST(Esp32BackendTest, SecuritySelectionAndSwitch) {
   config.security = AuthMode::kOpen;
   config.ip_mode = IpMode::kDhcp;
   config.mac_policy = MacPolicy::kDevice;
-  RequestResult open_request = controller.connect(config, {});
+  Controller::RequestResult open_request = controller.connect(config, {});
   ASSERT_NE(open_request.id, 0u);
   RunBackend(scheduler);
   // The shim does not implement a DHCP server. Verify cleared static settings,
@@ -117,7 +117,7 @@ TEST(Esp32BackendTest, PreferencesReopen) {
   settings.connection = TestConfig("persisted");
   CredentialUpdate update;
   update.intent = CredentialIntent::kClear;
-  ASSERT_EQ(store.saveProfile(0x1234, settings, update).error, Status::kOk);
+  ASSERT_EQ(store.saveProfile(0x1234, settings, update), Status::kOk);
   ArduinoPreferencesStore reopened;
   ASSERT_EQ(reopened.begin(), Status::kOk);
   Profile out;

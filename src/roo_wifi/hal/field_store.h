@@ -20,8 +20,8 @@ class FieldStore : public Store {
   /// @param id Nonzero profile key to save.
   /// @param settings Non-secret settings to persist.
   /// @param credential Credential action and replacement material.
-  SaveResult saveProfile(ProfileId id, const ProfileSettings &settings,
-                         const CredentialUpdate &credential) override;
+  Status saveProfile(ProfileId id, const ProfileSettings &settings,
+                     const CredentialUpdate &credential) override;
   /// Removes a profile by marking it deleted before field cleanup.
   /// @param id Nonzero profile key to remove.
   Status removeProfile(ProfileId id) override;

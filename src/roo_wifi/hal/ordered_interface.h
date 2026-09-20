@@ -6,11 +6,14 @@
 #include "roo_wifi/hal/interface.h"
 
 namespace roo_wifi {
+
 /// Defines native station commands consumed by the ordered radio adapter.
 /// A successful asynchronous command posts a corresponding event. Already-idle
 /// disconnect returns NotFound. A driver must not independently reconnect.
 class NativeStation {
  public:
+  using ScanRead = Interface::ScanRead;
+
   /// Carries a copied native station event to the ordered adapter.
   struct Event {
     enum Kind {
@@ -169,4 +172,5 @@ class OrderedInterface : public Interface, private NativeStation::Receiver {
   ConnectionConfig config_;
   Credentials credentials_;
 };
+
 }  // namespace roo_wifi

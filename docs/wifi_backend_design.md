@@ -276,7 +276,7 @@ survive; otherwise this adapter cannot claim safe interrupted-update detection.
 No claim of cross-key atomicity is made.
 
 Radio enablement remains a separate boolean. The application supplies a known
-startup profile key through ControllerOptions (zero disables startup selection).
+startup profile key through Controller::Options (zero disables startup selection).
 When enabled, the controller loads only that profile and honors its auto-connect
 setting. Missing/incomplete startup data produces an explicit failure and no
 connection attempt; it does not trigger a search through saved profiles.
@@ -534,11 +534,6 @@ struct Profile {
   bool has_credentials = false;
 };
 
-struct SaveResult {
-  Status error = Status::kOk;
-  ProfileId id = 0;
-};
-
 /// Persistence adapter: synchronous operations executed on the controller
 /// context.
 class Store {
@@ -549,8 +544,8 @@ class Store {
   /// Privileged backend access, used only to construct connection input.
   virtual Status loadCredentials(ProfileId id, Credentials& out) const = 0;
   /// Create or replace a known nonzero key; kKeep requires a valid old profile.
-  virtual SaveResult saveProfile(ProfileId id, const ProfileSettings& settings,
-                                 const CredentialUpdate& credential) = 0;
+  virtual Status saveProfile(ProfileId id, const ProfileSettings& settings,
+                             const CredentialUpdate& credential) = 0;
   virtual Status removeProfile(ProfileId id) = 0;
   virtual Status readEnabled(bool& out) const = 0;
   virtual Status writeEnabled(bool enabled) = 0;
@@ -562,17 +557,6 @@ struct ScanRecord {
   AuthMode security = AuthMode::kUnknown;
   int8_t rssi_dbm = -128;
   uint16_t channel = 0;
-};
-/// Borrowed until next successful scan publication or controller shutdown.
-struct ScanSnapshot {
-  uint64_t generation = 0;
-  const ScanRecord* records = nullptr;
-  size_t count = 0;
-  bool truncated = false;
-};
-struct ScanRead {
-  size_t count = 0;
-  bool truncated = false;
 };
 struct Support {
   uint32_t authentication_modes = 0;  // Bit positions are AuthMode values.
@@ -609,10 +593,6 @@ enum class OperationKind : uint8_t {
   kSave,
   kRemove
 };
-struct RequestResult {
-  OperationId id = 0;  // Zero: rejected, no completion callback.
-  Status error = Status::kOk;
-};
 struct OperationResult {
   OperationId id = 0;
   OperationKind kind = OperationKind::kScan;
@@ -625,6 +605,11 @@ struct OperationResult {
 /// Radio adapter; all sink delivery is serialized on the supplied scheduler.
 class Interface {
  public:
+  struct ScanRead {
+    size_t count = 0;
+    bool truncated = false;
+  };
+
   class Sink {
    public:
     virtual ~Sink() = default;
@@ -652,17 +637,28 @@ class Interface {
   virtual void shutdown() = 0;
 };
 
-struct ControllerOptions {
-  ProfileId startup_profile = 0;  // Application-known key; zero disables selection.
-  uint16_t max_scan_results = 100;
-  uint32_t scan_timeout_ms = 15000;
-  uint32_t connect_timeout_ms = 30000;
-  uint32_t transition_timeout_ms = 5000;
-};
-
 /// Public backend facade; owns model/operation state, borrows its dependencies.
 class Controller {
  public:
+  struct Options {
+    ProfileId startup_profile = 0;
+    uint16_t max_scan_results = 100;
+    uint32_t scan_timeout_ms = 15000;
+    uint32_t connect_timeout_ms = 30000;
+    uint32_t transition_timeout_ms = 5000;
+  };
+  struct RequestResult {
+    OperationId id = 0;
+    Status error = Status::kOk;
+  };
+  /// Borrowed until next successful scan publication or controller shutdown.
+  struct ScanSnapshot {
+    uint64_t generation = 0;
+    const ScanRecord* records = nullptr;
+    size_t count = 0;
+    bool truncated = false;
+  };
+
   class Listener {
    public:
     virtual ~Listener() = default;
@@ -674,8 +670,9 @@ class Controller {
     virtual void onOperationFinished(const OperationResult& result) {}
   };
   Controller(Interface& interface, Store& store,
-             roo_scheduler::Scheduler& scheduler,
-             ControllerOptions options = {});
+             roo_scheduler::Scheduler& scheduler);
+  Controller(Interface& interface, Store& store,
+             roo_scheduler::Scheduler& scheduler, Options options);
   ~Controller();
   Controller(const Controller&) = delete;
   Controller& operator=(const Controller&) = delete;
@@ -794,10 +791,10 @@ class Provisioner final : public roo_wifi::Controller::Listener {
   }
   ~Provisioner() override { wifi_.removeListener(*this); }
 
-  roo_wifi::RequestResult start(roo_wifi::ProfileId key,
-                                const roo_wifi::ProfileSettings& settings,
-                                const roo_wifi::CredentialUpdate& credential) {
-    roo_wifi::RequestResult request =
+  roo_wifi::Controller::RequestResult start(
+      roo_wifi::ProfileId key, const roo_wifi::ProfileSettings& settings,
+      const roo_wifi::CredentialUpdate& credential) {
+    roo_wifi::Controller::RequestResult request =
         wifi_.saveProfile(key, settings, credential);
     save_id_ = request.id;
     error_ = request.error;
@@ -811,7 +808,7 @@ class Provisioner final : public roo_wifi::Controller::Listener {
       if (result.error != roo_wifi::Status::kOk) return;
       profile_id_ = result.profile_id;
       // Admission is safe in a callback: execution and completion are deferred.
-      roo_wifi::RequestResult connect = wifi_.connect(profile_id_);
+      roo_wifi::Controller::RequestResult connect = wifi_.connect(profile_id_);
       connect_id_ = connect.id;
       error_ = connect.error;
     } else if (result.id == connect_id_) {

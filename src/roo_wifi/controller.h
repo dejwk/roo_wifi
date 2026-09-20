@@ -16,6 +16,45 @@ namespace roo_wifi {
 /// admissions remain closed while profile operations remain available.
 class Controller : private Interface::Sink {
  public:
+  /// Configures controller capacity, timeouts, and optional startup connection.
+  struct Options {
+    /// Profile to connect after startup; zero disables automatic selection.
+    ProfileId startup_profile = 0;
+
+    /// Maximum records retained from one scan.
+    uint16_t max_scan_results = 100;
+
+    /// Deadlines in milliseconds for scan, connection, and state transitions.
+    uint32_t scan_timeout_ms = 15000;
+    uint32_t connect_timeout_ms = 30000;
+    uint32_t transition_timeout_ms = 5000;
+  };
+
+  /// Returns immediate operation admission status and its deferred-completion ID.
+  struct RequestResult {
+    /// Nonzero admitted operation ID; zero means no completion callback follows.
+    OperationId id = 0;
+
+    /// Immediate admission or validation result.
+    Status error = Status::kOk;
+  };
+
+  /// Borrows records from the controller's latest successful scan publication.
+  /// The records remain valid until the next successful publication or shutdown.
+  struct ScanSnapshot {
+    /// Monotonically increasing publication generation.
+    uint64_t generation = 0;
+
+    /// Borrowed contiguous scan records.
+    const ScanRecord *records = nullptr;
+
+    /// Number of records available through @p records.
+    size_t count = 0;
+
+    /// Whether the radio found more records than the configured capacity.
+    bool truncated = false;
+  };
+
   /// Receives deferred controller state and operation notifications.
   class Listener {
    public:
@@ -49,10 +88,13 @@ class Controller : private Interface::Sink {
   /// @param interface Radio adapter that outlives this controller.
   /// @param store Persistence adapter that outlives this controller.
   /// @param scheduler Context on which calls and callbacks run.
+  Controller(Interface &interface, Store &store,
+             roo_scheduler::Scheduler &scheduler);
+
+  /// Creates a controller with explicit capacity, timeout, and startup options.
   /// @param options Capacity, timeout, and startup behavior.
   Controller(Interface &interface, Store &store,
-             roo_scheduler::Scheduler &scheduler,
-             ControllerOptions options = {});
+             roo_scheduler::Scheduler &scheduler, Options options);
 
   /// Shuts down the controller without notifying listeners.
   ~Controller();
@@ -165,7 +207,7 @@ class Controller : private Interface::Sink {
   Interface &interface_;
   Store &store_;
   roo_scheduler::Scheduler &scheduler_;
-  ControllerOptions options_;
+  Options options_;
   roo_scheduler::SingletonTask work_;
   roo_scheduler::SingletonTask timer_;
   roo_scheduler::SingletonTask reconnect_;

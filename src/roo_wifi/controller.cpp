@@ -5,8 +5,12 @@
 
 namespace roo_wifi {
 Controller::Controller(Interface &interface, Store &store,
+                       roo_scheduler::Scheduler &scheduler)
+    : Controller(interface, store, scheduler, Options{}) {}
+
+Controller::Controller(Interface &interface, Store &store,
                        roo_scheduler::Scheduler &scheduler,
-                       ControllerOptions options)
+                       Options options)
     : interface_(interface),
       store_(store),
       scheduler_(scheduler),
@@ -75,7 +79,7 @@ bool Controller::isEnabled() const { return enabled_; }
 
 bool Controller::isScanning() const { return scan_.result.id != 0; }
 
-ScanSnapshot Controller::scanSnapshot() const { return snapshot_; }
+Controller::ScanSnapshot Controller::scanSnapshot() const { return snapshot_; }
 
 LinkState Controller::linkState() const { return link_; }
 
@@ -91,8 +95,8 @@ Status Controller::radioAdmission() const {
   return Status::kOk;
 }
 
-RequestResult Controller::admit(Slot &slot, OperationKind kind,
-                                ProfileId profile) {
+Controller::RequestResult Controller::admit(Slot &slot, OperationKind kind,
+                                            ProfileId profile) {
   if (lifecycle_ != Lifecycle::kRunning) return {0, Status::kNotStarted};
   if (slot.result.id) return {0, Status::kBusy};
   if (next_id_ == std::numeric_limits<OperationId>::max())
@@ -103,7 +107,7 @@ RequestResult Controller::admit(Slot &slot, OperationKind kind,
   return {slot.result.id, Status::kOk};
 }
 
-RequestResult Controller::setEnabled(bool enabled) {
+Controller::RequestResult Controller::setEnabled(bool enabled) {
   Status error = radioAdmission();
   if (error != Status::kOk) return {0, error};
   if (scan_.result.id) return {0, Status::kBusy};
@@ -116,7 +120,7 @@ RequestResult Controller::setEnabled(bool enabled) {
   return result;
 }
 
-RequestResult Controller::scan() {
+Controller::RequestResult Controller::scan() {
   Status error = radioAdmission();
   if (error != Status::kOk) return {0, error};
   if (!enabled_) return {0, Status::kDisabled};
@@ -127,8 +131,8 @@ RequestResult Controller::scan() {
   return admit(scan_, OperationKind::kScan);
 }
 
-RequestResult Controller::connect(const ConnectionConfig &config,
-                                  const Credentials &credential) {
+Controller::RequestResult Controller::connect(
+    const ConnectionConfig &config, const Credentials &credential) {
   Status error = radioAdmission();
   if (error != Status::kOk) return {0, error};
   if (!enabled_) return {0, Status::kDisabled};
@@ -147,7 +151,7 @@ RequestResult Controller::connect(const ConnectionConfig &config,
   return result;
 }
 
-RequestResult Controller::connect(ProfileId id) {
+Controller::RequestResult Controller::connect(ProfileId id) {
   Profile profile;
   Credentials credential;
   Status error = loadProfile(id, profile);
@@ -162,7 +166,7 @@ RequestResult Controller::connect(ProfileId id) {
   return result;
 }
 
-RequestResult Controller::disconnect() {
+Controller::RequestResult Controller::disconnect() {
   Status error = radioAdmission();
   if (error != Status::kOk) return {0, error};
   RequestResult result = admit(station_, OperationKind::kDisconnect);
@@ -173,9 +177,9 @@ RequestResult Controller::disconnect() {
   return result;
 }
 
-RequestResult Controller::saveProfile(ProfileId id,
-                                      const ProfileSettings &settings,
-                                      const CredentialUpdate &credential) {
+Controller::RequestResult Controller::saveProfile(
+    ProfileId id, const ProfileSettings &settings,
+    const CredentialUpdate &credential) {
   if (!id) return {0, Status::kInvalidArgument};
   RequestResult result = admit(write_, OperationKind::kSave, id);
   if (result.id) {
@@ -185,7 +189,7 @@ RequestResult Controller::saveProfile(ProfileId id,
   return result;
 }
 
-RequestResult Controller::removeProfile(ProfileId id) {
+Controller::RequestResult Controller::removeProfile(ProfileId id) {
   if (!id) return {0, Status::kInvalidArgument};
   return admit(write_, OperationKind::kRemove, id);
 }
@@ -240,8 +244,7 @@ void Controller::execute() {
     Status error = Status::kOk;
     switch (slot->result.kind) {
       case OperationKind::kSave:
-        error = store_.saveProfile(slot->result.profile_id, settings_, update_)
-                    .error;
+        error = store_.saveProfile(slot->result.profile_id, settings_, update_);
         update_ = {};
         break;
       case OperationKind::kRemove:
@@ -328,7 +331,7 @@ void Controller::onOperationFinished(const OperationResult &result) {
   bool startup = false;
   if (error == Status::kOk && slot->state == Slot::State::kRunning) {
     if (result.kind == OperationKind::kScan) {
-      ScanRead read;
+      Interface::ScanRead read;
       error =
           interface_.readScanResults(records_.data(), records_.size(), read);
       if (error == Status::kOk && read.count <= records_.size()) {

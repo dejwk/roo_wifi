@@ -24,7 +24,7 @@ class ArduinoPreferencesStore : public FieldStore {
   /// Security/settings are explicit; legacy preferences remain untouched.
   /// @param id Nonzero destination profile key.
   /// @param settings Settings paired with the legacy credentials.
-  SaveResult importLegacy(ProfileId id, const ProfileSettings &settings);
+  Status importLegacy(ProfileId id, const ProfileSettings &settings);
 
   /// Reads the legacy default SSID without importing it.
   /// @param out Receives the SSID on success and is unchanged on failure.

@@ -1,11 +1,9 @@
 #pragma once
-#include "roo_wifi/types.h"
-
-namespace roo_scheduler {
-class Scheduler;
-}
+#include "roo_wifi/profile.h"
+#include "roo_wifi/status.h"
 
 namespace roo_wifi {
+
 /// Persists Wi-Fi profiles and radio enablement on the controller context.
 class Store {
  public:
@@ -29,8 +27,8 @@ class Store {
   /// @param id Nonzero profile key to save.
   /// @param settings Non-secret settings to persist.
   /// @param credential Requested credential action and replacement material.
-  virtual SaveResult saveProfile(ProfileId id, const ProfileSettings &settings,
-                                 const CredentialUpdate &credential) = 0;
+  virtual Status saveProfile(ProfileId id, const ProfileSettings &settings,
+                             const CredentialUpdate &credential) = 0;
 
   /// Removes a profile without disconnecting an active link that used it.
   /// @param id Nonzero profile key to remove.

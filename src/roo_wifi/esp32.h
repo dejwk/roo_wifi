@@ -11,7 +11,7 @@ class Esp32Wifi {
   /// @param scheduler Context on which controller calls and callbacks run.
   /// @param options Capacity, timeout, and startup behavior.
   explicit Esp32Wifi(roo_scheduler::Scheduler &scheduler,
-                     ControllerOptions options = {})
+                     Controller::Options options = {})
       : controller_(interface_, store_, scheduler, options) {}
 
   /// Returns the portable controller facade.

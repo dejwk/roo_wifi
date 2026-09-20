@@ -28,7 +28,7 @@ Rejection returns ID zero and has no completion event.
 roo_scheduler::Scheduler scheduler;
 MyRadio radio;
 MyStore store;
-roo_wifi::ControllerOptions options;
+roo_wifi::Controller::Options options;
 options.startup_profile = 1;  // Zero disables startup selection.
 roo_wifi::Controller wifi(radio, store, scheduler, options);
 roo_wifi::Status error = wifi.begin();
@@ -74,7 +74,7 @@ password presence or automatically migrates scans; old preferences remain.
 The existing `roo_windows_wifi::Configurator` takes the new Controller and an
 optional caller-known profile key (default 1). It stores one provisioned profile
 at that key, keeps its own display model, and no longer reads secrets for display.
-Its example uses the same key as ControllerOptions.startup_profile. UI-owned
+Its example uses the same key as Controller::Options::startup_profile. UI-owned
 SSID-only selection rejects ambiguity; explicit-security backend selection
 remains supported. Applications needing multiple remembered configurations own
 and persist their own key mapping.

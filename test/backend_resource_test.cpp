@@ -54,7 +54,7 @@ TEST(BackendResourceTest, RetainedPlateauAndAllocationFreeObservation) {
     TestStation native;
     OrderedInterface radio(native);
     MemoryStore store;
-    ControllerOptions options;
+    Controller::Options options;
     options.max_scan_results = n;
     Controller controller(radio, store, scheduler, options);
     store.enabled = true;
@@ -71,7 +71,7 @@ TEST(BackendResourceTest, RetainedPlateauAndAllocationFreeObservation) {
       Pump(scheduler);
       native.emit({NativeStation::Event::kScanDone});
       Pump(scheduler);
-      RequestResult request = controller.connect(TestConfig(), {});
+      Controller::RequestResult request = controller.connect(TestConfig(), {});
       controller.cancel(request.id);
       Pump(scheduler);
       Profile profile;

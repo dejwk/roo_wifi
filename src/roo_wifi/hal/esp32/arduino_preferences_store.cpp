@@ -89,23 +89,23 @@ Status ArduinoPreferencesStore::eraseField(const char *key) {
              : Status::kStorageFailure;
 }
 
-SaveResult ArduinoPreferencesStore::importLegacy(
+Status ArduinoPreferencesStore::importLegacy(
     ProfileId id, const ProfileSettings &settings) {
   const Ssid &ssid = settings.connection.ssid;
   if (!ssid.size || ssid.size > 32 || memchr(ssid.bytes, 0, ssid.size))
-    return {Status::kInvalidArgument, id};
+    return Status::kInvalidArgument;
   CredentialUpdate update;
   update.intent = CredentialIntent::kClear;
   if (settings.connection.security != AuthMode::kOpen) {
     roo_prefs::Transaction t(collection_,
                              roo_prefs::Transaction::Mode::kReadOnly);
-    if (!t.active()) return {Status::kStorageFailure, id};
+    if (!t.active()) return Status::kStorageFailure;
     char key[16];
     LegacyKey(ssid, key);
     std::string password;
     Status error = Read(t.store().readString(key, password));
-    if (error != Status::kOk) return {error, id};
-    if (password.size() > 64) return {Status::kCorrupt, id};
+    if (error != Status::kOk) return error;
+    if (password.size() > 64) return Status::kCorrupt;
     update.intent = CredentialIntent::kReplace;
     update.replacement.size = password.size();
     memcpy(update.replacement.bytes, password.data(), password.size());

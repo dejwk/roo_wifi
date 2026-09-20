@@ -1,4 +1,5 @@
-#include "roo_wifi/types.h"
+#include "roo_wifi/configuration.h"
+#include "roo_wifi/radio.h"
 
 namespace roo_wifi {
 namespace {

@@ -180,62 +180,61 @@ Status FieldStore::loadCredentials(ProfileId id, Credentials &out) const {
   return error;
 }
 
-SaveResult FieldStore::saveProfile(ProfileId id,
-                                   const ProfileSettings &settings,
-                                   const CredentialUpdate &update) {
-  if (!id) return {Status::kInvalidArgument, 0};
+Status FieldStore::saveProfile(ProfileId id, const ProfileSettings &settings,
+                               const CredentialUpdate &update) {
+  if (!id) return Status::kInvalidArgument;
   Credentials secret;
   if (settings.connection.security == AuthMode::kOpen &&
       (update.intent != CredentialIntent::kClear || update.replacement.size)) {
-    return {Status::kInvalidArgument, id};
+    return Status::kInvalidArgument;
   }
   switch (update.intent) {
     case CredentialIntent::kKeep: {
       Status error = loadCredentials(id, secret);
-      if (error != Status::kOk) return {error, id};
+      if (error != Status::kOk) return error;
       break;
     }
     case CredentialIntent::kReplace:
       secret = update.replacement;
       break;
     case CredentialIntent::kClear:
-      if (update.replacement.size) return {Status::kInvalidArgument, id};
+      if (update.replacement.size) return Status::kInvalidArgument;
       break;
     default:
-      return {Status::kInvalidArgument, id};
+      return Status::kInvalidArgument;
   }
   Status error = Validate(settings.connection, secret);
-  if (error != Status::kOk) return {error, id};
+  if (error != Status::kOk) return error;
   char key[16];
   Key(id, "state", key);
   error = writeField(key, &kIncomplete, 1);
-  if (error != Status::kOk) return {Status::kStorageFailure, id};
+  if (error != Status::kOk) return Status::kStorageFailure;
   for (size_t f = 0; f < 14; ++f) {
     uint8_t data[64];
     size_t n = Encode(f, settings, secret, data);
     Key(id, kFields[f], key);
     error = n ? writeField(key, data, n) : eraseField(key);
-    if (error != Status::kOk) return {Status::kIncomplete, id};
+    if (error != Status::kOk) return Status::kIncomplete;
   }
   Key(id, "state", key);
-  if (writeField(key, &kReady, 1) == Status::kOk) return {Status::kOk, id};
+  if (writeField(key, &kReady, 1) == Status::kOk) return Status::kOk;
   // A failed final commit can still have reached storage. Verify every field.
   error = readStatus(id);
-  if (error == Status::kIncomplete) return {error, id};
-  if (error != Status::kOk) return {Status::kCommitUnknown, id};
+  if (error == Status::kIncomplete) return error;
+  if (error != Status::kOk) return Status::kCommitUnknown;
   ProfileSettings stored;
   Credentials stored_secret;
   error = read(id, stored, stored_secret);
-  if (error != Status::kOk) return {Status::kCommitUnknown, id};
+  if (error != Status::kOk) return Status::kCommitUnknown;
   for (size_t f = 0; f < 14; ++f) {
     uint8_t expected[64];
     uint8_t actual[64];
     size_t a = Encode(f, settings, secret, expected);
     size_t b = Encode(f, stored, stored_secret, actual);
     if (a != b || memcmp(expected, actual, a))
-      return {Status::kCommitUnknown, id};
+      return Status::kCommitUnknown;
   }
-  return {Status::kOk, id};
+  return Status::kOk;
 }
 
 Status FieldStore::removeProfile(ProfileId id) {
