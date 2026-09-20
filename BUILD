@@ -1,17 +1,32 @@
 load("@rules_cc//cc:cc_library.bzl", "cc_library")
 load("@rules_cc//cc:cc_test.bzl", "cc_test")
 
+ESP32_DEPS = select({
+    "@roo_testing//roo_testing/platforms:is_arduino": [
+        "@roo_prefs",
+        "@roo_testing//roo_testing/frameworks/esp-idf:core",
+    ],
+    "@roo_testing//roo_testing/platforms:is_idf": [
+        "@roo_prefs",
+        "@roo_testing//roo_testing/frameworks/esp-idf:core",
+    ],
+    "//conditions:default": [],
+})
+
 cc_library(
     name = "roo_wifi",
-    srcs = glob(["src/roo_wifi/*.cpp", "src/roo_wifi/hal/*.cpp"]),
-    hdrs = glob(["src/**/*.h"], exclude = [
-        "src/roo_wifi/hal/esp32/**",
-        "src/roo_wifi/hal/prefs/**",
-        "src/roo_wifi/esp32.h",
+    srcs = glob([
+        "src/roo_wifi/*.cpp",
+        "src/roo_wifi/hal/*.cpp",
     ]),
+    hdrs = glob(["src/**/*.h"]),
     includes = ["src"],
     visibility = ["//visibility:public"],
-    deps = ["@roo_collections", "@roo_backport", "@roo_scheduler"],
+    deps = [
+        "@roo_backport",
+        "@roo_collections",
+        "@roo_scheduler",
+    ] + ESP32_DEPS,
 )
 
 cc_library(
@@ -26,7 +41,7 @@ cc_library(
     ]) + ["src/roo_wifi/esp32.h"],
     includes = ["src"],
     visibility = ["//visibility:public"],
-    deps = [":roo_wifi", "@roo_prefs", "@roo_testing//roo_testing/frameworks/esp-idf:core"],
+    deps = [":roo_wifi"] + ESP32_DEPS,
 )
 
 cc_test(
@@ -43,7 +58,10 @@ cc_test(
 )
 
 [
-    test_suite(name = name, tests = ["//test:" + name])
+    test_suite(
+        name = name,
+        tests = ["//test:" + name],
+    )
     for name in [
         "configuration_store_test",
         "configuration_controller_test",
@@ -52,9 +70,15 @@ cc_test(
     ]
 ]
 
-test_suite(name = "configuration_interface_test", tests = ["//test:esp32_backend_test"])
+test_suite(
+    name = "configuration_interface_test",
+    tests = ["//test:esp32_backend_test"],
+)
 
 test_suite(
     name = "interface_conformance_test",
-    tests = ["//test:controller_test", "//test:esp32_backend_test"],
+    tests = [
+        "//test:controller_test",
+        "//test:esp32_backend_test",
+    ],
 )
