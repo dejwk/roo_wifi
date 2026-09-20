@@ -4,12 +4,12 @@
 #include <limits>
 
 namespace roo_wifi {
-Controller::Controller(Interface &interface, Store &store,
-                       roo_scheduler::Scheduler &scheduler)
+Controller::Controller(Interface& interface, Store& store,
+                       roo_scheduler::Scheduler& scheduler)
     : Controller(interface, store, scheduler, Options{}) {}
 
-Controller::Controller(Interface &interface, Store &store,
-                       roo_scheduler::Scheduler &scheduler, Options options)
+Controller::Controller(Interface& interface, Store& store,
+                       roo_scheduler::Scheduler& scheduler, Options options)
     : interface_(interface),
       store_(store),
       scheduler_(scheduler),
@@ -45,7 +45,7 @@ void Controller::close(bool notify) {
   reconnect_.cancel();
   if (running) interface_.shutdown();
   if (notify) {
-    for (Slot *slot : {&station_, &scan_, &write_})
+    for (Slot* slot : {&station_, &scan_, &write_})
       if (slot->result.id != 0) finish(*slot, Status::kCancelled);
   }
   station_ = {};
@@ -60,14 +60,14 @@ void Controller::close(bool notify) {
 
 void Controller::shutdown() { close(true); }
 
-void Controller::addListener(Listener &listener) {
+void Controller::addListener(Listener& listener) {
   if (std::find(listeners_.begin(), listeners_.end(), &listener) ==
       listeners_.end()) {
     listeners_.push_back(&listener);
   }
 }
 
-void Controller::removeListener(Listener &listener) {
+void Controller::removeListener(Listener& listener) {
   listeners_.erase(std::remove(listeners_.begin(), listeners_.end(), &listener),
                    listeners_.end());
 }
@@ -82,7 +82,7 @@ Controller::ScanSnapshot Controller::scanSnapshot() const { return snapshot_; }
 
 LinkState Controller::linkState() const { return link_; }
 
-Status Controller::loadProfile(ProfileId id, Profile &out) const {
+Status Controller::loadProfile(ProfileId id, Profile& out) const {
   if (lifecycle_ != Lifecycle::kRunning) return Status::kNotStarted;
   if (id == 0) return Status::kInvalidArgument;
   return store_.loadProfile(id, out);
@@ -94,7 +94,7 @@ Status Controller::radioAdmission() const {
   return Status::kOk;
 }
 
-Controller::RequestResult Controller::admit(Slot &slot, OperationKind kind,
+Controller::RequestResult Controller::admit(Slot& slot, OperationKind kind,
                                             ProfileId profile) {
   if (lifecycle_ != Lifecycle::kRunning) return {0, Status::kNotStarted};
   if (slot.result.id != 0) return {0, Status::kBusy};
@@ -130,8 +130,8 @@ Controller::RequestResult Controller::scan() {
   return admit(scan_, OperationKind::kScan);
 }
 
-Controller::RequestResult Controller::connect(const ConnectionConfig &config,
-                                              const Credentials &credential) {
+Controller::RequestResult Controller::connect(const ConnectionConfig& config,
+                                              const Credentials& credential) {
   Status status = radioAdmission();
   if (status != Status::kOk) return {0, status};
   if (!enabled_) return {0, Status::kDisabled};
@@ -177,8 +177,8 @@ Controller::RequestResult Controller::disconnect() {
 }
 
 Controller::RequestResult Controller::saveProfile(
-    ProfileId id, const ProfileSettings &settings,
-    const CredentialUpdate &credential) {
+    ProfileId id, const ProfileSettings& settings,
+    const CredentialUpdate& credential) {
   if (id == 0) return {0, Status::kInvalidArgument};
   RequestResult result = admit(write_, OperationKind::kSave, id);
   if (result.id != 0) {
@@ -193,15 +193,15 @@ Controller::RequestResult Controller::removeProfile(ProfileId id) {
   return admit(write_, OperationKind::kRemove, id);
 }
 
-Controller::Slot *Controller::find(OperationId id) {
+Controller::Slot* Controller::find(OperationId id) {
   if (id == 0) return nullptr;
-  for (Slot *slot : {&station_, &scan_, &write_})
+  for (Slot* slot : {&station_, &scan_, &write_})
     if (slot->result.id == id) return slot;
   return nullptr;
 }
 
 Status Controller::cancel(OperationId id) {
-  Slot *slot = find(id);
+  Slot* slot = find(id);
   if (slot == nullptr) return Status::kNotFound;
   if (slot == &write_ && slot->state != Slot::State::kQueued)
     return Status::kBusy;
@@ -230,7 +230,7 @@ void Controller::execute() {
   // Capture IDs: a listener's follow-up admission must wait for the next task.
   OperationId ids[] = {station_.result.id, scan_.result.id, write_.result.id};
   for (OperationId id : ids) {
-    Slot *slot = find(id);
+    Slot* slot = find(id);
     if (slot == nullptr || slot->state == Slot::State::kRunning ||
         slot->state == Slot::State::kCancelling ||
         slot->state == Slot::State::kTimingOut)
@@ -261,7 +261,7 @@ void Controller::execute() {
         status = interface_.disconnect(id);
         break;
       case OperationKind::kScan:
-        for (Listener *listener : listeners_)
+        for (Listener* listener : listeners_)
           listener->onScanStateChanged(true);
         status = interface_.scan(id, options_.max_scan_results);
         break;
@@ -282,7 +282,7 @@ void Controller::execute() {
 
 void Controller::checkTimeouts() {
   if (lifecycle_ == Lifecycle::kClosed) return;
-  for (Slot *slot : {&station_, &scan_}) {
+  for (Slot* slot : {&station_, &scan_}) {
     if (slot->result.id == 0 || slot->state == Slot::State::kQueued ||
         roo_time::Uptime::Now() < slot->deadline) {
       continue;
@@ -303,7 +303,7 @@ void Controller::checkTimeouts() {
     timer_.scheduleAfter(roo_time::Millis(1));
 }
 
-void Controller::finish(Slot &slot, Status error, int32_t native,
+void Controller::finish(Slot& slot, Status error, int32_t native,
                         bool has_native) {
   OperationResult result = slot.result;
   result.error =
@@ -314,16 +314,16 @@ void Controller::finish(Slot &slot, Status error, int32_t native,
   if (result.kind == OperationKind::kConnect && result.error != Status::kOk)
     reconnect_profile_ = 0;
   if (result.kind == OperationKind::kScan)
-    for (Listener *listener : listeners_) listener->onScanStateChanged(false);
+    for (Listener* listener : listeners_) listener->onScanStateChanged(false);
   if (result.kind == OperationKind::kSave ||
       result.kind == OperationKind::kRemove) {
-    for (Listener *listener : listeners_) listener->onProfilesChanged();
+    for (Listener* listener : listeners_) listener->onProfilesChanged();
   }
-  for (Listener *listener : listeners_) listener->onOperationFinished(result);
+  for (Listener* listener : listeners_) listener->onOperationFinished(result);
 }
 
-void Controller::onOperationFinished(const OperationResult &result) {
-  Slot *slot = find(result.id);
+void Controller::onOperationFinished(const OperationResult& result) {
+  Slot* slot = find(result.id);
   if (slot == nullptr || lifecycle_ == Lifecycle::kClosed ||
       result.kind != slot->result.kind)
     return;
@@ -337,7 +337,7 @@ void Controller::onOperationFinished(const OperationResult &result) {
       if (status == Status::kOk && read.count <= records_.size()) {
         snapshot_ = {snapshot_.generation + 1, records_.data(), read.count,
                      read.truncated};
-        for (Listener *listener : listeners_) listener->onScanChanged();
+        for (Listener* listener : listeners_) listener->onScanChanged();
       } else if (status == Status::kOk) {
         status = Status::kCorrupt;
       }
@@ -356,17 +356,17 @@ void Controller::onOperationFinished(const OperationResult &result) {
 void Controller::onEnabledChanged(bool enabled) {
   if (lifecycle_ == Lifecycle::kClosed) return;
   enabled_ = enabled;
-  for (Listener *listener : listeners_) listener->onEnabledChanged(enabled);
+  for (Listener* listener : listeners_) listener->onEnabledChanged(enabled);
 }
 
-void Controller::onLinkChanged(const LinkState &state) {
+void Controller::onLinkChanged(const LinkState& state) {
   if (lifecycle_ == Lifecycle::kClosed || faulted_) return;
   if (state.connection_id != link_.connection_id &&
       state.connection_id != station_.result.id) {
     return;
   }
   link_ = state;
-  for (Listener *listener : listeners_) listener->onLinkChanged(state);
+  for (Listener* listener : listeners_) listener->onLinkChanged(state);
   if (state.phase == LinkPhase::kIdle && reconnect_profile_ != 0 &&
       station_.result.id == 0) {
     reconnect_.scheduleAfter(roo_time::Seconds(1));
