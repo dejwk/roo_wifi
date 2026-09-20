@@ -32,8 +32,8 @@ scan model primarily exposes SSID, open/secured state, and RSSI; the HAL already
 has richer AP authentication and radio metadata. The legacy store persists
 radio enablement, default SSID, and passwords rather than enumerable profiles.
 
-The [ESP32 adapter](../src/roo_wifi/hal/esp32/esp32_arduino_interface.h) uses Arduino
-Wi-Fi and process-global station events. The [umbrella header](../src/roo_wifi.h)
+The [ESP32 adapter](../src/roo_wifi/hal/esp32/esp32_arduino_interface.h) uses
+ESP-IDF Wi-Fi and process-global station events. The [umbrella header](../src/roo_wifi.h)
 conditionally exposes an ESP32 convenience controller, but the current
 [build target](../BUILD) includes both core and platform implementation with an
 ESP32 Wi-Fi dependency. Portable class names alone do not establish build or
@@ -353,7 +353,8 @@ and [disconnect/reconnect guidance](https://docs.espressif.com/projects/esp-idf/
 The normal switch from network A to B follows this sequence:
 
 1. Retain A as the active connection/attempt and B as the requested next target.
-   Disable independent Arduino auto-reconnect so one backend owns retry policy.
+   Do not install an independent reconnect handler; one backend owns retry
+   policy.
 2. Request disconnection/cancellation of A. Process already queued A events in
    their original order without completing B or starting independent retries.
 3. On A's disconnect/failure outcome, settle A's operation and apply B's

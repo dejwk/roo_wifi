@@ -3,9 +3,10 @@
 #include <algorithm>
 #include <cstring>
 
-#include "WiFi.h"
 #include "esp_netif.h"
+#include "esp_random.h"
 #include "esp_system.h"
+#include "esp_wifi_default.h"
 
 namespace roo_wifi {
 namespace {
@@ -86,14 +87,28 @@ ScanRecord Record(const wifi_ap_record_t &ap) {
   return r;
 }
 
-/// Translates an Arduino IPv4 address into its portable representation.
-Ipv4Address Address(const IPAddress &ip) {
-  return {{ip[0], ip[1], ip[2], ip[3]}};
+/// Translates an ESP-IDF IPv4 address into its portable representation.
+Ipv4Address Address(const esp_ip4_addr_t &ip) {
+  const uint32_t raw = ip.addr;
+  return {{static_cast<uint8_t>(raw), static_cast<uint8_t>(raw >> 8),
+           static_cast<uint8_t>(raw >> 16), static_cast<uint8_t>(raw >> 24)}};
 }
 
-/// Translates a portable IPv4 address into its Arduino representation.
-IPAddress Address(const Ipv4Address &ip) {
-  return IPAddress(ip.bytes[0], ip.bytes[1], ip.bytes[2], ip.bytes[3]);
+/// Translates a portable IPv4 address into ESP-IDF's native representation.
+esp_ip4_addr_t Address(const Ipv4Address &ip) {
+  esp_ip4_addr_t result = {};
+  result.addr = static_cast<uint32_t>(ip.bytes[0]) |
+                (static_cast<uint32_t>(ip.bytes[1]) << 8) |
+                (static_cast<uint32_t>(ip.bytes[2]) << 16) |
+                (static_cast<uint32_t>(ip.bytes[3]) << 24);
+  return result;
+}
+
+Ipv4Address PrefixMask(uint8_t prefix_length) {
+  const uint32_t mask =
+      prefix_length == 0 ? 0 : 0xffffffffu << (32 - prefix_length);
+  return {{static_cast<uint8_t>(mask >> 24), static_cast<uint8_t>(mask >> 16),
+           static_cast<uint8_t>(mask >> 8), static_cast<uint8_t>(mask)}};
 }
 
 /// Maps an ESP result code to the portable connection outcome.
@@ -108,12 +123,26 @@ Esp32Station::~Esp32Station() { detach(); }
 Status Esp32Station::attach(Receiver &receiver) {
   roo::lock_guard<roo::mutex> lock(owner_mutex);
   if (owner != nullptr) return Status::kBusy;
-  // Arduino creates the default loop on first mode initialization.
-  WiFi.persistent(false);
-  WiFi.setAutoReconnect(false);
-  esp_err_t error = esp_event_loop_create_default();
-  if (error != ESP_OK && error != ESP_ERR_INVALID_STATE)
+  esp_err_t error = esp_netif_init();
+  if (error != ESP_OK && error != ESP_ERR_INVALID_STATE) {
     return Status::kConnectionFailed;
+  }
+  error = esp_event_loop_create_default();
+  if (error != ESP_OK && error != ESP_ERR_INVALID_STATE) {
+    return Status::kConnectionFailed;
+  }
+  if (esp_netif_get_handle_from_ifkey("WIFI_STA_DEF") == nullptr &&
+      esp_netif_create_default_wifi_sta() == nullptr) {
+    return Status::kConnectionFailed;
+  }
+  wifi_init_config_t init = WIFI_INIT_CONFIG_DEFAULT();
+  error = esp_wifi_init(&init);
+  if (error != ESP_OK && error != ESP_ERR_WIFI_INIT_STATE) {
+    return Status::kConnectionFailed;
+  }
+  if (esp_wifi_set_storage(WIFI_STORAGE_RAM) != ESP_OK) {
+    return Status::kConnectionFailed;
+  }
   receiver_ = &receiver;
   error = esp_event_handler_instance_register(WIFI_EVENT, ESP_EVENT_ANY_ID,
                                               &Dispatch, this, &wifi_handler_);
@@ -151,8 +180,7 @@ void Esp32Station::detach() {
   owner = nullptr;
   selecting_ = scan_active_ = false;
   secret_ = {};
-  WiFi.setAutoReconnect(false);
-  WiFi.disconnect(true, false);
+  esp_wifi_disconnect();
 }
 
 Support Esp32Station::support() const {
@@ -177,17 +205,28 @@ Support Esp32Station::support() const {
 }
 
 Status Esp32Station::enable(bool enabled) {
-  if ((WiFi.getMode() == WIFI_STA && enabled) ||
-      (WiFi.getMode() == WIFI_OFF && !enabled)) {
+  wifi_mode_t mode;
+  if (esp_wifi_get_mode(&mode) != ESP_OK) {
+    return Status::kConnectionFailed;
+  }
+  if ((mode == WIFI_MODE_STA && enabled) ||
+      (mode == WIFI_MODE_NULL && !enabled)) {
     receiver_->post({enabled ? Event::kEnabled : Event::kDisabled});
     return Status::kOk;
   }
-  if (!WiFi.mode(enabled ? WIFI_STA : WIFI_OFF))
-    return Status::kConnectionFailed;
   if (enabled) {
-    WiFi.setAutoReconnect(false);
-    if (device_mac_[0] == 0 && device_mac_[1] == 0)
+    if (esp_wifi_set_mode(WIFI_MODE_STA) != ESP_OK ||
+        esp_wifi_start() != ESP_OK) {
+      return Status::kConnectionFailed;
+    }
+    if (device_mac_[0] == 0 && device_mac_[1] == 0) {
       esp_wifi_get_mac(WIFI_IF_STA, device_mac_);
+    }
+  } else {
+    if (esp_wifi_stop() != ESP_OK ||
+        esp_wifi_set_mode(WIFI_MODE_NULL) != ESP_OK) {
+      return Status::kConnectionFailed;
+    }
   }
   return Status::kOk;
 }
@@ -302,14 +341,13 @@ Status Esp32Station::startSelected(const wifi_ap_record_t &ap) {
   dns1.ip.type = dns2.ip.type = ESP_IPADDR_TYPE_V4;
   if (config_.ip_mode == IpMode::kStaticIpv4) {
     const StaticIpv4 &settings = config_.static_ipv4;
-    uint32_t mask = 0xffffffffu << (32 - settings.prefix_length);
-    ip.ip.addr = uint32_t(Address(settings.address));
-    ip.gw.addr = uint32_t(Address(settings.gateway));
-    ip.netmask.addr = uint32_t(IPAddress(mask >> 24, (mask >> 16) & 255,
-                                         (mask >> 8) & 255, mask & 255));
-    dns1.ip.u_addr.ip4.addr = uint32_t(Address(settings.dns1));
-    if (settings.has_dns2)
-      dns2.ip.u_addr.ip4.addr = uint32_t(Address(settings.dns2));
+    ip.ip = Address(settings.address);
+    ip.gw = Address(settings.gateway);
+    ip.netmask = Address(PrefixMask(settings.prefix_length));
+    dns1.ip.u_addr.ip4 = Address(settings.dns1);
+    if (settings.has_dns2) {
+      dns2.ip.u_addr.ip4 = Address(settings.dns2);
+    }
   }
   if (esp_netif_set_ip_info(netif, &ip) != ESP_OK ||
       esp_netif_set_dns_info(netif, ESP_NETIF_DNS_MAIN, &dns1) != ESP_OK ||
@@ -454,17 +492,32 @@ void Esp32Station::event(esp_event_base_t base, int32_t id, void *data) {
     event.link.ssid = Record(current_ap).ssid;
     memcpy(event.link.bssid.bytes, current_ap.bssid, 6);
     event.kind = Event::kAddressReady;
-    event.link.address = Address(IPAddress(info.ip_info.ip.addr));
-    event.link.gateway = Address(IPAddress(info.ip_info.gw.addr));
+    event.link.address = Address(info.ip_info.ip);
+    event.link.gateway = Address(info.ip_info.gw);
     event.link.has_ipv4 = true;
-    event.link.dns1 = Address(WiFi.dnsIP(0));
-    event.link.dns2 = Address(WiFi.dnsIP(1));
-    event.link.has_dns1 = uint32_t(WiFi.dnsIP(0)) != 0;
-    event.link.has_dns2 = uint32_t(WiFi.dnsIP(1)) != 0;
+    esp_netif_dns_info_t dns = {};
+    if (esp_netif_get_dns_info(info.esp_netif, ESP_NETIF_DNS_MAIN, &dns) ==
+            ESP_OK &&
+        dns.ip.u_addr.ip4.addr != 0) {
+      event.link.dns1 = Address(dns.ip.u_addr.ip4);
+      event.link.has_dns1 = true;
+    }
+    if (esp_netif_get_dns_info(info.esp_netif, ESP_NETIF_DNS_BACKUP, &dns) ==
+            ESP_OK &&
+        dns.ip.u_addr.ip4.addr != 0) {
+      event.link.dns2 = Address(dns.ip.u_addr.ip4);
+      event.link.has_dns2 = true;
+    }
   } else if (base == IP_EVENT && id == IP_EVENT_STA_LOST_IP) {
     // Loss has no connection identity. Verify current netif state; never clear
     // a newly acquired address merely because an old loss timer expired.
-    if (uint32_t(WiFi.localIP()) != 0) return;
+    esp_netif_t *netif = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
+    esp_netif_ip_info_t current_ip = {};
+    if (netif != nullptr &&
+        esp_netif_get_ip_info(netif, &current_ip) == ESP_OK &&
+        current_ip.ip.addr != 0) {
+      return;
+    }
     event.kind = Event::kAddressLost;
   } else {
     return;

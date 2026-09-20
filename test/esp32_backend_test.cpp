@@ -1,4 +1,3 @@
-#include "WiFi.h"
 #include "backend_fakes.h"
 #include "esp_netif.h"
 #include "gtest/gtest.h"
@@ -9,6 +8,14 @@
 
 namespace roo_wifi {
 namespace {
+esp_ip4_addr_t Ip(uint8_t a, uint8_t b, uint8_t c, uint8_t d) {
+  esp_ip4_addr_t result = {};
+  result.addr = static_cast<uint32_t>(a) | (static_cast<uint32_t>(b) << 8) |
+                (static_cast<uint32_t>(c) << 16) |
+                (static_cast<uint32_t>(d) << 24);
+  return result;
+}
+
 /// Runs scheduler work while allowing the ESP32 simulation to advance.
 void RunBackend(roo_scheduler::Scheduler& scheduler) {
   for (int i = 0; i < 1000; ++i) {
@@ -33,7 +40,7 @@ TEST(Esp32BackendTest, SecuritySelectionAndSwitch) {
   environment.addAccessPoint(std::move(secure));
   FakeEsp32().setWifiEnvironment(environment);
   roo_scheduler::Scheduler scheduler;
-  Esp32ArduinoInterface radio;
+  Esp32IdfInterface radio;
   MemoryStore store;
   store.enabled = true;
   Controller controller(radio, store, scheduler);
@@ -83,9 +90,9 @@ TEST(Esp32BackendTest, SecuritySelectionAndSwitch) {
   EXPECT_EQ(controller.linkState().phase, LinkPhase::kAssociated);
   ip_event_got_ip_t lease = {};
   lease.esp_netif = netif;
-  lease.ip_info.ip.addr = uint32_t(IPAddress(192, 168, 1, 100));
-  lease.ip_info.gw.addr = uint32_t(IPAddress(192, 168, 1, 1));
-  lease.ip_info.netmask.addr = uint32_t(IPAddress(255, 255, 255, 0));
+  lease.ip_info.ip = Ip(192, 168, 1, 100);
+  lease.ip_info.gw = Ip(192, 168, 1, 1);
+  lease.ip_info.netmask = Ip(255, 255, 255, 0);
   ASSERT_EQ(esp_netif_set_ip_info(netif, &lease.ip_info), ESP_OK);
   ASSERT_EQ(esp_event_post(IP_EVENT, IP_EVENT_STA_GOT_IP, &lease, sizeof(lease),
                            portMAX_DELAY),
@@ -102,7 +109,7 @@ TEST(Esp32BackendTest, SecuritySelectionAndSwitch) {
 // Verifies a second owner cannot attach to the process-global station.
 TEST(Esp32BackendTest, ExclusiveOwnership) {
   roo_scheduler::Scheduler scheduler;
-  Esp32ArduinoInterface a, b;
+  Esp32IdfInterface a, b;
   MemoryStore sa;
   MemoryStore sb;
   Controller first(a, sa, scheduler), second(b, sb, scheduler);

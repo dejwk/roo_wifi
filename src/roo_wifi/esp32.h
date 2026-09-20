@@ -19,7 +19,7 @@ class Esp32Wifi {
 
  private:
   ArduinoPreferencesStore store_;
-  Esp32ArduinoInterface interface_;
+  Esp32IdfInterface interface_;
   Controller controller_;
 };
 }  // namespace roo_wifi

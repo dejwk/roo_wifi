@@ -1,5 +1,6 @@
 # roo_wifi
-WiFi controller library for ESP32, supporting storing persistent configuration in flash, and abstracting away the architecture.
+Wi-Fi controller library for ESP32, supporting persistent configuration in flash
+and a portable controller API. Its radio adapter uses ESP-IDF directly.
 
 ## Arduino use
 
@@ -26,6 +27,11 @@ void loop() {
 
 Use `connect(ssid, password)` to select a network and `forget(ssid)` to remove
 the selected network and its saved credentials.
+
+The same radio adapter can be used from a raw ESP-IDF application. It creates
+the default event loop, station netif, and Wi-Fi driver only when they have not
+already been initialized; applications must still leave the station exclusively
+owned by `roo_wifi`.
 
 ## Host emulation
 

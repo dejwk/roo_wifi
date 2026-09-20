@@ -5,7 +5,7 @@
 
 namespace roo_wifi {
 
-/// Drives the ESP32 station through Arduino and ESP-IDF APIs.
+/// Drives the ESP32 station through ESP-IDF APIs.
 class Esp32Station : public NativeStation {
  public:
   /// Creates an unattached ESP32 station driver.
@@ -80,15 +80,17 @@ class Esp32Station : public NativeStation {
   uint8_t device_mac_[6] = {};
 };
 
-/// Combines an ESP32 station driver with the portable ordered interface.
-class Esp32ArduinoInterface : private Esp32Station, public OrderedInterface {
+/// Combines an ESP-IDF station driver with the portable ordered interface.
+class Esp32IdfInterface : private Esp32Station, public OrderedInterface {
  public:
   /// Creates the station driver and its ordered interface.
-  Esp32ArduinoInterface()
-      : OrderedInterface(static_cast<Esp32Station &>(*this)) {}
+  Esp32IdfInterface() : OrderedInterface(static_cast<Esp32Station &>(*this)) {}
 
   /// Shuts down ordered dispatch before destroying the station driver.
-  ~Esp32ArduinoInterface() override { OrderedInterface::shutdown(); }
+  ~Esp32IdfInterface() override { OrderedInterface::shutdown(); }
 };
+
+/// Compatibility name for the former Arduino Wi-Fi adapter.
+using Esp32ArduinoInterface = Esp32IdfInterface;
 
 }  // namespace roo_wifi

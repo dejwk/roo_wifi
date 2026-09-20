@@ -16,7 +16,7 @@ cc_library(
     hdrs = glob(["src/roo_wifi/hal/esp32/*.h"]) + ["src/roo_wifi/esp32.h"],
     includes = ["src"],
     visibility = ["//visibility:public"],
-    deps = [":roo_wifi", "@roo_prefs", "@roo_testing//roo_testing/frameworks/arduino-esp32-2.0.4/libraries/WiFi"],
+    deps = [":roo_wifi", "@roo_prefs", "@roo_testing//roo_testing/frameworks/esp-idf:core"],
 )
 
 cc_test(
