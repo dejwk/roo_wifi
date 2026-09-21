@@ -143,6 +143,13 @@ Status Esp32Station::attach(Receiver &receiver) {
   if (esp_wifi_set_storage(WIFI_STORAGE_RAM) != ESP_OK) {
     return Status::kConnectionFailed;
   }
+  // Initialization can select STA mode without starting the driver. Establish
+  // a stopped, mode-null baseline before registering this owner's handlers so
+  // enable(false) is immediately complete and enable(true) really starts Wi-Fi.
+  if (esp_wifi_stop() != ESP_OK ||
+      esp_wifi_set_mode(WIFI_MODE_NULL) != ESP_OK) {
+    return Status::kConnectionFailed;
+  }
   receiver_ = &receiver;
   error = esp_event_handler_instance_register(WIFI_EVENT, ESP_EVENT_ANY_ID,
                                               &Dispatch, this, &wifi_handler_);
@@ -215,8 +222,12 @@ Status Esp32Station::enable(bool enabled) {
     return Status::kOk;
   }
   if (enabled) {
-    if (esp_wifi_set_mode(WIFI_MODE_STA) != ESP_OK ||
-        esp_wifi_start() != ESP_OK) {
+    if (esp_wifi_set_mode(WIFI_MODE_STA) != ESP_OK) {
+      return Status::kConnectionFailed;
+    }
+    if (esp_wifi_start() != ESP_OK) {
+      // Do not mistake a failed start for an enabled radio on the next retry.
+      esp_wifi_set_mode(WIFI_MODE_NULL);
       return Status::kConnectionFailed;
     }
     if (device_mac_[0] == 0 && device_mac_[1] == 0) {

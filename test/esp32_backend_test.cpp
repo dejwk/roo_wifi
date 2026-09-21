@@ -31,6 +31,35 @@ void RunBackend(roo_scheduler::Scheduler& scheduler) {
 }
 }  // namespace
 
+// Exercise event delivery while the application sleeps inside its scheduler.
+TEST(Esp32BackendTest, EnableWhileSchedulerWaits) {
+  roo_scheduler::Scheduler scheduler;
+  Esp32IdfInterface radio;
+  MemoryStore store;
+  Controller controller(radio, store, scheduler);
+  Observer observer;
+  controller.addListener(observer);
+  ASSERT_EQ(controller.begin(), Status::kOk);
+  scheduler.delay(roo_time::Millis(50));
+  ASSERT_FALSE(controller.isEnabled());
+  auto request = controller.setEnabled(true);
+  ASSERT_EQ(request.status, Status::kOk);
+  scheduler.delay(roo_time::Millis(500));
+  EXPECT_TRUE(controller.isEnabled());
+  ASSERT_FALSE(observer.results.empty());
+  EXPECT_EQ(observer.results.back().id, request.id);
+  EXPECT_EQ(observer.results.back().status, Status::kOk);
+  for (bool enabled : {false, true, true, false}) {
+    request = controller.setEnabled(enabled);
+    ASSERT_EQ(request.status, Status::kOk);
+    scheduler.delay(roo_time::Millis(50));
+    EXPECT_EQ(controller.isEnabled(), enabled);
+    EXPECT_EQ(observer.results.back().id, request.id);
+    EXPECT_EQ(observer.results.back().status, Status::kOk);
+  }
+  controller.shutdown();
+}
+
 // Verifies the production radio selects exact security among same-SSID APs,
 // completes only with an address, and switches through the old disconnect.
 TEST(Esp32BackendTest, SecuritySelectionAndSwitch) {
@@ -84,26 +113,17 @@ TEST(Esp32BackendTest, SecuritySelectionAndSwitch) {
   Controller::RequestResult open_request = controller.connect(config, {});
   ASSERT_NE(open_request.id, 0u);
   RunBackend(scheduler);
-  // The shim does not implement a DHCP server. Verify cleared static settings,
-  // then deliver an explicit lease event through the real native event source.
+  // The emulator supplies a DHCP lease; switching must replace the static
+  // address and complete through the real native IP event.
   esp_netif_t* netif = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
-  esp_netif_ip_info_t cleared = {};
-  ASSERT_EQ(esp_netif_get_ip_info(netif, &cleared), ESP_OK);
-  EXPECT_EQ(cleared.ip.addr, 0u);
+  esp_netif_ip_info_t leased = {};
+  ASSERT_EQ(esp_netif_get_ip_info(netif, &leased), ESP_OK);
+  EXPECT_EQ(leased.ip.addr, Ip(192, 168, 1, 100).addr);
   esp_netif_dhcp_status_t dhcp;
   ASSERT_EQ(esp_netif_dhcpc_get_status(netif, &dhcp), ESP_OK);
   EXPECT_EQ(dhcp, ESP_NETIF_DHCP_STARTED);
-  EXPECT_EQ(controller.linkState().phase, LinkPhase::kAssociated);
-  ip_event_got_ip_t lease = {};
-  lease.esp_netif = netif;
-  lease.ip_info.ip = Ip(192, 168, 1, 100);
-  lease.ip_info.gw = Ip(192, 168, 1, 1);
-  lease.ip_info.netmask = Ip(255, 255, 255, 0);
-  ASSERT_EQ(esp_netif_set_ip_info(netif, &lease.ip_info), ESP_OK);
-  ASSERT_EQ(esp_event_post(IP_EVENT, IP_EVENT_STA_GOT_IP, &lease, sizeof(lease),
-                           portMAX_DELAY),
-            ESP_OK);
-  Pump(scheduler);
+  EXPECT_EQ(controller.linkState().phase, LinkPhase::kAddressReady);
+  EXPECT_EQ(controller.linkState().address.bytes[2], 1);
   EXPECT_EQ(memcmp(controller.linkState().station_mac.bytes, original_mac, 6),
             0);
   EXPECT_EQ(observer.results.back().id, open_request.id);
