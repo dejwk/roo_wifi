@@ -63,6 +63,16 @@ class MemoryStore : public FieldStore {
     return Status::kOk;
   }
 
+  /// Visits every field key in deterministic map order.
+  Status enumerateFields(FieldVisitor visitor, void *context) const override {
+    for (const auto &entry : values) {
+      if (!visitor(context, entry.first.data(), entry.first.size())) {
+        return Status::kStopped;
+      }
+    }
+    return Status::kOk;
+  }
+
   std::map<std::string, std::vector<uint8_t>> values;
   int writes = 0;
   int fail_at = -1;

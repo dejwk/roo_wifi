@@ -4,8 +4,8 @@
 namespace roo_wifi {
 /// Implements profile persistence using ordered, durable small-value fields.
 /// Implementations must serialize access; successful writes survive restart in
-/// call order. No key iteration, catalog, or atomic multi-key update is
-/// required.
+/// call order. Field-key iteration is used to discover committed profiles; no
+/// separate catalog or atomic multi-key update is required.
 class FieldStore : public Store {
  public:
   /// Loads profile metadata from its committed fields.
@@ -30,6 +30,9 @@ class FieldStore : public Store {
   Status removeProfile(ProfileId id) override;
 
  protected:
+  /// Callback used internally to enumerate persisted field keys.
+  using FieldVisitor = bool (*)(void *context, const char *key, size_t size);
+
   /// Reads one persisted field.
   /// @param key Field key to read.
   /// @param out Buffer of at least @p size bytes.
@@ -48,7 +51,14 @@ class FieldStore : public Store {
   /// @param key Field key to remove.
   virtual Status eraseField(const char *key) = 0;
 
+  /// Calls the visitor for each persisted field key in unspecified order.
+  /// Returns kStopped when the visitor returns false.
+  virtual Status enumerateFields(FieldVisitor visitor, void *context) const = 0;
+
  private:
+  Status enumerateProfiles(ProfileVisitor visitor,
+                           void *context) const override;
+
   /// Reads and validates a profile's commit marker.
   Status readStatus(ProfileId id) const;
 

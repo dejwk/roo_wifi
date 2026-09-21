@@ -145,6 +145,17 @@ class Controller : private Interface::Sink {
   /// @param out Receives settings on success and is unchanged on failure.
   Status loadProfile(ProfileId id, Profile &out) const;
 
+  /// Calls `visitor` once for every complete saved profile.
+  ///
+  /// The order is unspecified. Return false to stop early. Profile reads are
+  /// allowed from the visitor, but the store must not be modified during the
+  /// call.
+  template <typename Visitor>
+  Status forEachProfile(Visitor &&visitor) const {
+    if (lifecycle_ != Lifecycle::kRunning) return Status::kNotStarted;
+    return store_.forEachProfile(visitor);
+  }
+
   /// Requests a physical radio enablement transition and persists its outcome.
   /// @param enabled Desired physical radio state.
   RequestResult setEnabled(bool enabled);

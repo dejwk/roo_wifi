@@ -134,6 +134,13 @@ TEST(Esp32BackendTest, PreferencesReopen) {
   ASSERT_EQ(store.saveProfile(0x1234, settings, update), Status::kOk);
   PrefsStore reopened;
   ASSERT_EQ(reopened.begin(), Status::kOk);
+  std::vector<ProfileId> ids;
+  ASSERT_EQ(reopened.forEachProfile([&](ProfileId id) {
+    ids.push_back(id);
+    return true;
+  }),
+            Status::kOk);
+  EXPECT_NE(std::find(ids.begin(), ids.end(), 0x1234), ids.end());
   Profile out;
   ASSERT_EQ(reopened.loadProfile(0x1234, out), Status::kOk);
   EXPECT_EQ(out.settings.connection.ssid.size, 9u);

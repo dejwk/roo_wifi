@@ -32,6 +32,21 @@ enablement, scan, connection, and profile-operation results. The runnable scan
 examples show how to enable the station and request a scan once the preceding
 enable operation has completed.
 
+Saved profiles can be discovered without a separate application catalog:
+
+```cpp
+wifi.forEachProfile([&](roo_wifi::ProfileId id) {
+  roo_wifi::Profile profile;
+  if (wifi.loadProfile(id, profile) == roo_wifi::Status::kOk) {
+    // Use the non-secret profile metadata.
+  }
+  return true;  // Return false to stop early.
+});
+```
+
+Enumeration order is unspecified and only complete, committed profiles are
+visited. It works independently of radio enablement after `begin()`.
+
 In a raw ESP-IDF application, initialize the default NVS partition before
 constructing `WiFi`; the adapter creates the default event loop, station
 netif, and Wi-Fi driver only when they are not already initialized. In either

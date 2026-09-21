@@ -13,6 +13,30 @@ constexpr const char *kFields[] = {
     "ssid", "auth",   "hidden",  "ip",  "addr", "gw",  "dns1",
     "dns2", "prefix", "dns2set", "mac", "auto", "enc", "secret"};
 
+/// Parses the status-field key that identifies one profile record. Only keys
+/// shaped as eight lowercase hex digits followed by `state` are accepted, so
+/// radio enablement, legacy SSID/password entries, and every non-status profile
+/// field in the same collection are ignored.
+bool ProfileStateKey(const char *key, size_t size, ProfileId &id) {
+  if (size != 13 || memcmp(key + 8, "state", 5) != 0) return false;
+  ProfileId value = 0;
+  for (size_t i = 0; i < 8; ++i) {
+    char c = key[i];
+    uint8_t digit;
+    if (c >= '0' && c <= '9') {
+      digit = c - '0';
+    } else if (c >= 'a' && c <= 'f') {
+      digit = c - 'a' + 10;
+    } else {
+      return false;
+    }
+    value = (value << 4) | digit;
+  }
+  if (value == 0) return false;
+  id = value;
+  return true;
+}
+
 /// Formats a stable field key for the supplied profile.
 void Key(ProfileId id, const char *field, char (&out)[16]) {
   snprintf(out, sizeof(out), "%08lx%s", static_cast<unsigned long>(id), field);
@@ -174,6 +198,34 @@ Status FieldStore::loadProfile(ProfileId id, Profile &out) const {
   result.has_credentials = secret.size != 0;
   out = result;
   return Status::kOk;
+}
+
+Status FieldStore::enumerateProfiles(ProfileVisitor visitor,
+                                     void *context) const {
+  if (visitor == nullptr) return Status::kInvalidArgument;
+  struct Context {
+    const FieldStore *store;
+    ProfileVisitor visitor;
+    void *visitor_context;
+    Status status;
+  } state = {this, visitor, context, Status::kOk};
+  Status result = enumerateFields(
+      [](void *opaque, const char *key, size_t size) {
+        Context &state = *static_cast<Context *>(opaque);
+        ProfileId id;
+        if (!ProfileStateKey(key, size, id)) return true;
+        Status status = state.store->readStatus(id);
+        if (status == Status::kNotFound || status == Status::kIncomplete) {
+          return true;
+        }
+        if (status != Status::kOk) {
+          state.status = status;
+          return false;
+        }
+        return state.visitor(state.visitor_context, id);
+      },
+      &state);
+  return state.status == Status::kOk ? result : state.status;
 }
 
 Status FieldStore::loadCredentials(ProfileId id, Credentials &out) const {

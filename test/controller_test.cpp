@@ -222,6 +222,65 @@ TEST(StoreTest, FailedDeleteCleanupAndRetry) {
   EXPECT_EQ(store.values.size(), 1u);
 }
 
+// Verifies enumeration exposes only committed profiles and can stop early.
+TEST(StoreTest, EnumeratesCommittedProfiles) {
+  MemoryStore store;
+  ProfileSettings settings;
+  settings.connection = TestConfig();
+  CredentialUpdate update;
+  update.intent = CredentialIntent::kClear;
+  ASSERT_EQ(store.saveProfile(42, settings, update), Status::kOk);
+  ASSERT_EQ(store.saveProfile(7, settings, update), Status::kOk);
+  ASSERT_EQ(store.saveProfile(9, settings, update), Status::kOk);
+  ASSERT_EQ(store.removeProfile(9), Status::kOk);
+  store.values["0000000bstate"] = {0x10};  // Interrupted save.
+  store.values["not-a-profile"] = {0x11};
+
+  std::vector<ProfileId> ids;
+  EXPECT_EQ(store.forEachProfile([&](ProfileId id) {
+    ids.push_back(id);
+    return true;
+  }),
+            Status::kOk);
+  std::sort(ids.begin(), ids.end());
+  EXPECT_EQ(ids, (std::vector<ProfileId>{7, 42}));
+
+  int visits = 0;
+  EXPECT_EQ(store.forEachProfile([&](ProfileId) {
+    ++visits;
+    return false;
+  }),
+            Status::kStopped);
+  EXPECT_EQ(visits, 1);
+}
+
+// Verifies the controller gates enumeration on its lifecycle and permits
+// profile reads from the visitor.
+TEST(ProfileEnumerationTest, ControllerFacade) {
+  roo_scheduler::Scheduler scheduler;
+  TestStation native;
+  OrderedInterface radio(native);
+  MemoryStore store;
+  Controller controller(radio, store, scheduler);
+  EXPECT_EQ(controller.forEachProfile([](ProfileId) { return true; }),
+            Status::kNotStarted);
+  ASSERT_EQ(controller.begin(), Status::kOk);
+  Pump(scheduler);
+
+  ProfileSettings settings;
+  settings.connection = TestConfig("enumerated");
+  CredentialUpdate update;
+  update.intent = CredentialIntent::kClear;
+  ASSERT_EQ(store.saveProfile(17, settings, update), Status::kOk);
+  EXPECT_EQ(controller.forEachProfile([&](ProfileId id) {
+    Profile profile;
+    EXPECT_EQ(controller.loadProfile(id, profile), Status::kOk);
+    EXPECT_EQ(profile.id, 17u);
+    return true;
+  }),
+            Status::kOk);
+}
+
 // Verifies Keep retains credentials, and metadata reads never return secret
 // bytes.
 TEST(StoreTest, ExplicitCredentialIntent) {

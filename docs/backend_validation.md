@@ -48,15 +48,16 @@ bazel build //:roo_windows_wifi //examples/simple:simple \
 - FIFO handoff is bounded to 16 owned native events. Overflow faults the
   interface rather than dropping correlation and permitting further commands.
 - Radio-off provisioning, known startup keys, explicit credential intent,
-  saved profiles surviving connection failure, and temporary unsaved connections.
+  allocation-free profile enumeration, saved profiles surviving connection
+  failure, and temporary unsaved connections.
 - Every marker/field interruption point, delete-cleanup retry, Keep failure on
   incomplete data, readable ambiguous final commits, unreadable commits, and
   unchanged outputs on read failure.
 - Production ESP32 harness selects exact security between same-SSID APs,
   switches connections, verifies static-to-DHCP reset and randomized/device MAC
   restoration, rejects zero/broadcast address readiness, rejects competing station
-  owners, and reloads small
-  profile fields through the actual preferences adapter.
+  owners, and enumerates/reloads small profile fields through the actual
+  preferences adapter.
 - The migrated UI model saves before connecting, reserves a caller-known key,
   and refuses ambiguous SSID-only security selection. The backend itself can
   connect to an explicitly requested security mode among same-SSID APs.

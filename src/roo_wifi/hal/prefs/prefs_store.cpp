@@ -19,6 +19,20 @@ Status Read(roo_prefs::ReadResult result) {
   }
 }
 
+/// Maps a roo_prefs enumeration outcome to its portable equivalent.
+Status Enumerate(roo_prefs::EnumerateResult result) {
+  switch (result) {
+    case roo_prefs::EnumerateResult::kOk:
+      return Status::kOk;
+    case roo_prefs::EnumerateResult::kStopped:
+      return Status::kStopped;
+    case roo_prefs::EnumerateResult::kUnsupported:
+      return Status::kUnsupported;
+    default:
+      return Status::kStorageFailure;
+  }
+}
+
 /// Derives the legacy credential key associated with an SSID.
 void LegacyKey(const Ssid &ssid, char (&out)[16]) {
   uint64_t hash = 525201411107845655ull;
@@ -91,6 +105,14 @@ Status PrefsStore::eraseField(const char *key) {
   return t.store().clear(key) == roo_prefs::ClearResult::kOk
              ? Status::kOk
              : Status::kStorageFailure;
+}
+
+Status PrefsStore::enumerateFields(FieldVisitor visitor, void *context) const {
+  if (visitor == nullptr) return Status::kInvalidArgument;
+  return Enumerate(
+      collection_.forEachKey([visitor, context](roo::string_view key) {
+        return visitor(context, key.data(), key.size());
+      }));
 }
 
 Status PrefsStore::importLegacy(ProfileId id, const ProfileSettings &settings) {

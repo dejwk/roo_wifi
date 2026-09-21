@@ -35,6 +35,7 @@ class PrefsStore : public FieldStore {
   Status readField(const char *, uint8_t *, size_t &) const override;
   Status writeField(const char *, const uint8_t *, size_t) override;
   Status eraseField(const char *) override;
+  Status enumerateFields(FieldVisitor visitor, void *context) const override;
 
  private:
   mutable roo_prefs::Collection collection_;

@@ -5,6 +5,10 @@ portable construction, fixed-size SSID/credential values, typed operation IDs
 and results, bounded scans, exact authentication requirements, ordered native
 lifecycle handling, known-key profiles and explicit credential intent.
 
+Profile enumeration is available through the portable Store and Controller
+APIs. The preferences adapter discovers committed profiles using `roo_prefs`
+key enumeration without maintaining a separate catalog.
+
 ESP32 construction now uses `roo_wifi/esp32.h` and `Esp32WiFi::controller()`.
 Bazel native consumers depend on `:esp32`. See `docs/backend_migration.md` for
 headless provisioning, temporary connections, and caller migration. See

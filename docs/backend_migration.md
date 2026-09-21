@@ -55,7 +55,8 @@ new profiles require Replace; Keep requires a complete existing profile.
 Call `saveProfile(known_key, settings, update)`, remember its request ID, and
 call `connect(result.profile_id)` only from its successful result callback.
 The radio may be off while saving. A subsequent Disabled or connection failure
-does not undo persistence. No catalog or generated profile identity is created.
+does not undo persistence. `forEachProfile()` discovers committed profile keys
+without a separate catalog; profile identity remains application-assigned.
 
 `connect(config, credentials)` makes a temporary connection without writing
 credentials. `connect(key)` copies the saved input before returning, so later
@@ -76,8 +77,8 @@ optional caller-known profile key (default 1). It stores one provisioned profile
 at that key, keeps its own display model, and no longer reads secrets for display.
 Its example uses the same key as Controller::Options::startup_profile. UI-owned
 SSID-only selection rejects ambiguity; explicit-security backend selection
-remains supported. Applications needing multiple remembered configurations own
-and persist their own key mapping.
+remains supported. Applications needing multiple remembered configurations can
+enumerate their assigned keys and load the corresponding non-secret metadata.
 
 See [validation and release status](backend_validation.md) for capabilities,
 measured resource bounds and physical-device acceptance still required before

@@ -39,9 +39,9 @@ conditionally exposes an ESP32 convenience controller, but the current
 ESP32 Wi-Fi dependency. Portable class names alone do not establish build or
 behavioral independence from that platform.
 
-The current [roo_prefs storage API](../../roo_prefs/src/roo_prefs/store/preferences_store.h)
-provides named-key reads/writes, blobs, and explicit status codes, but no key
-iteration. Its [Transaction](../../roo_prefs/src/roo_prefs/transaction.h) opens
+The upcoming [roo_prefs storage API](../../roo_prefs/src/roo_prefs/store/preferences_store.h)
+provides named-key reads/writes, blobs, explicit status codes, and allocation-free
+key iteration. Its [Transaction](../../roo_prefs/src/roo_prefs/transaction.h) opens
 and closes collection access; it is not an atomic multi-key commit. The current
 [Wi-Fi preferences adapter](../src/roo_wifi/hal/prefs/prefs_store.cpp)
 stores passwords under hashes of SSIDs and stores only the default SSID in
@@ -59,9 +59,9 @@ recoverable text. This constrains both enumeration and legacy migration.
    rejection, completion, cancellation, timeout, and subsequent link changes.
 5. Preserve native event identity/order and safe listener/input lifetimes through
    asynchronous dispatch, including cancellation and destruction.
-6. Support lookup and updates of known saved configurations, explicit credential
-   intent, reuse of recoverable legacy data, and reported storage failures.
-   Listing every saved configuration is not required.
+6. Support enumeration, lookup, and updates of saved configurations, explicit
+   credential intent, reuse of recoverable legacy data, and reported storage
+   failures without maintaining a separate profile catalog.
 7. Apply supported hidden-network, reconnect, DHCP/static IPv4, and station MAC
    configuration; report actual support and available link diagnostics.
 8. Keep public domain and HAL contracts free of ESP32/Arduino/RTOS-specific types.
@@ -161,7 +161,7 @@ Backend operations cover:
 
 - enabling/disabling the interface and requesting scans,
 - observing current connection and scan state,
-- loading, saving, and deleting profiles by a caller-known key,
+- enumerating profile keys and loading, saving, and deleting profiles,
 - connecting using a saved profile ID or explicit connection configuration,
 - disconnecting, cancelling supported operations, and reporting outcomes,
 - validating and applying supported Wi-Fi/IP settings.
@@ -205,11 +205,11 @@ HAL acceptance must not be presented as confirmed physical completion.
 
 #### Persistence and Platform Work in `roo_wifi`
 
-`Store` provides direct access by a caller-known profile key. It does not expose
-iteration, allocate profile IDs, or maintain a catalog. An application can use a
-single fixed key for its provisioned network, or retain its own mapping for
-multiple configurations. Listing saved networks is a consumer feature, not a
-prerequisite for Wi-Fi persistence.
+`Store` provides allocation-free enumeration and direct access by profile key.
+It does not allocate profile IDs or maintain a separate catalog. An application
+can use a single fixed key for its provisioned network or enumerate multiple
+configurations. Enumeration reports committed profile IDs in unspecified order;
+the consumer loads metadata for the IDs it needs and derives its own presentation.
 
 Extend `Interface` and the ESP32 implementation to apply authentication,
 hidden-network, DHCP/static IPv4 (address, prefix, gateway, primary and optional
@@ -242,7 +242,9 @@ length limit. Store SSID bytes (at most 32), credential bytes (at most 64), and
 individual booleans/enums/IPv4 values separately. A small format/status value
 marks a profile as ready, incomplete, or deleted. No field exceeds 64 bytes;
 there are no slot limits, profile-list blobs, bank buffers, revision counters,
-or index writes. Native storage exhaustion remains an explicit storage failure.
+or index writes. Enumeration recognizes status-field keys and uses `roo_prefs`
+key iteration, so profile updates cannot leave a separate index stale. Native
+storage exhaustion remains an explicit storage failure.
 
 A save loads the old credential only when Keep is requested, validates all input,
 and then performs these ordered writes:
@@ -281,7 +283,7 @@ When enabled, the controller loads only that profile and honors its auto-connect
 setting. Missing/incomplete startup data produces an explicit failure and no
 connection attempt; it does not trigger a search through saved profiles.
 
-#### Legacy Data and Optional Catalogs
+#### Legacy Data and Profile Discovery
 
 Retain legacy preferences. At explicit migration time, the application supplies a
 destination key and SSID (or reads the legacy default SSID), and the adapter reads
@@ -289,12 +291,11 @@ the existing hashed password key directly. Security must be supplied or resolved
 before saving a usable profile; do not guess from password presence. Import uses
 the same save protocol and does not run automatically on scans or after deletion.
 There is no full-store migration or requirement to discover legacy SSIDs.
-
-A consumer that needs a saved-networks page can provide a separate catalog of
-known keys using storage appropriate to that application. The core Store does
-not acquire optional iterator stubs solely for that UI. Without a catalog,
-provisioning, known-profile editing, and direct connection still work. Neither
-scanning nor loading one profile implicitly builds a complete saved list.
+Profile enumeration considers only the new recoverable profile-key format;
+legacy hashed credential keys are ignored. Ready profiles are visited, while
+incomplete and deleted records are excluded. A consumer can therefore implement
+a saved-networks page without maintaining a second catalog. Neither scanning nor
+loading one profile implicitly builds or retains a complete saved list.
 
 ### HAL Evolution and Native Event Correlation
 
@@ -464,7 +465,8 @@ enum class Status : uint8_t {
   kStorageFailure,
   kCommitUnknown,
   kCorrupt,
-  kIncomplete
+  kIncomplete,
+  kStopped
 };
 
 /// An SSID is up to 32 bytes, not necessarily a null-terminated string.
@@ -535,6 +537,8 @@ struct Profile {
   bool has_credentials = false;
 };
 
+using ProfileVisitor = bool (*)(void* context, ProfileId id);
+
 /// Persistence adapter: synchronous operations executed on the controller
 /// context.
 class Store {
@@ -542,6 +546,9 @@ class Store {
   virtual ~Store() = default;
   virtual Status begin() = 0;
   virtual Status loadProfile(ProfileId id, Profile& out) const = 0;
+  /// Visit committed profile IDs; false stops with Status::kStopped.
+  template <typename Visitor>
+  Status forEachProfile(Visitor&& visitor) const;
   /// Privileged backend access, used only to construct connection input.
   virtual Status loadCredentials(ProfileId id, Credentials& out) const = 0;
   /// Create or replace a known nonzero key; kKeep requires a valid old profile.
@@ -550,6 +557,10 @@ class Store {
   virtual Status removeProfile(ProfileId id) = 0;
   virtual Status readEnabled(bool& out) const = 0;
   virtual Status writeEnabled(bool enabled) = 0;
+
+ protected:
+  virtual Status enumerateProfiles(ProfileVisitor visitor,
+                                   void* context) const = 0;
 };
 
 struct ScanRecord {
@@ -687,6 +698,8 @@ class Controller {
   ScanSnapshot scanSnapshot() const;
   LinkState linkState() const;
   Status loadProfile(ProfileId id, Profile& out) const;
+  template <typename Visitor>
+  Status forEachProfile(Visitor&& visitor) const;
   RequestResult setEnabled(bool enabled);
   RequestResult scan();
   RequestResult connect(const ConnectionConfig& config,
@@ -834,7 +847,7 @@ class Provisioner final : public roo_wifi::Controller::Listener {
 | Requirements | Concrete API and validation |
 | --- | --- |
 | 1, 3: AP data and security | ScanRecord, ConnectionConfig.security, Support.authentication_modes, and HAL security-enforcement tests. |
-| 2, 6: headless provisioning and persistence | Store load/save/remove by caller-known ProfileId, CredentialUpdate, incomplete-write errors, and the consumer above. |
+| 2, 6: headless provisioning and persistence | Store enumeration and load/save/remove by ProfileId, CredentialUpdate, incomplete-write errors, and the consumer above. |
 | 4, 5: precise asynchronous outcomes and lifetime | RequestResult, OperationResult, Interface::Sink, cancel/shutdown, deferred listeners, and lifecycle tests. |
 | 7: connection settings and diagnostics | StaticIpv4, MacPolicy, ProfileSettings.auto_connect, LinkState availability flags, and native configuration tests. |
 | 8, 9: portable implementations | Interface/Store virtual contracts with standard fixed-size types, SDK-free compile test and two test adapters. |
@@ -935,11 +948,12 @@ model or legacy API preservation is a condition of backend tests passing.
 
 ### Phase 4: Persist Connection Profiles and Credential Intent
 
-Implement direct known-key load/save/remove using small preference values and
+Implement profile enumeration and direct known-key load/save/remove using small preference values and
 the incomplete/ready/deleted status protocol above. Add caller-assigned profile
 keys, startup selection, keep/replace/clear intent, and explicit incomplete/error
 results. Preserve old preferences and provide explicit import from a supplied
-SSID to a supplied profile key. No enumeration or full-store migration is needed.
+SSID to a supplied profile key. Use `roo_prefs` key enumeration to discover ready
+status fields without a separate catalog; no full-store migration is needed.
 Support persistence with the radio off and temporary unsaved connections. Add
 headless usage documentation covering both single-key provisioning and repair
 of an interrupted save. Do not persist application proxy/metered policies here.
@@ -952,12 +966,13 @@ Proposed commit message:
 > detection, with known-key provisioning and legacy credential import.
 
 Validation: add and run `//:configuration_store_test` and affected controller
-tests. Use a preferences fake exposing known-key operations only. Cover every
+tests. Use a preferences fake exposing field-key enumeration. Cover every
 interrupted-write point, marker/write/read errors, create/replace/remove/retry,
 Keep after incomplete save, storage exhaustion, legacy lookup, startup selection,
 and radio-off use. Verify ordered durability on the native preferences backend
 before claiming incomplete-update detection. Check that no stored value exceeds
-64 bytes and that loading one key neither scans nor allocates a catalog.
+64 bytes and that enumeration excludes incomplete/deleted records without
+allocating a catalog.
 
 ### Phase 5: Implement Platform Connection Configuration
 
@@ -1010,8 +1025,9 @@ platform or Material 3 UI is required for backend acceptance.
   lifetime rules, and platform-independent error handling.
 - Native adapter tests cover ordered switching, cancellation, same-SSID retry,
   IP-state interpretation and teardown; hardware checks address SDK-sensitive cases.
-- Store tests cover known-key access, small values, interrupted-save detection,
-  error reporting, legacy lookup, credentials, startup selection, and radio-off use.
+- Store tests cover enumeration, known-key access, small values, interrupted-save
+  detection, error reporting, legacy lookup, credentials, startup selection, and
+  radio-off use.
 - Configuration tests cover authentication enforcement, hidden networks,
   reconnect policy, static-to-DHCP transitions and available diagnostics.
 - Resource tests distinguish retained capacity from peak transient allocations
@@ -1033,14 +1049,14 @@ Exposing Arduino/ESP-IDF structs is convenient for the first adapter but prevent
 SDK-free consumers and alternative implementations. Translate at the adapter
 boundary and retain native codes only as supplemental diagnostics.
 
-#### Require Enumerable Profiles and Atomic Record Replacement
+#### Maintain a Separate Catalog or Require Atomic Record Replacement
 
-A complete catalog and atomic replacement can help products that manage many
-saved networks. They are not backend requirements here. Implementing them over
-preferences introduced fixed slots, dual banks, cursors, generated IDs, and
-migration machinery without a demonstrated need. Keep direct small-value access
-and explicit interrupted-update outcomes; applications with stronger persistence
-needs can supply a different Store and their own catalog.
+A separate catalog and atomic replacement can help products that need stable
+ordering or stronger transactions. They are not backend requirements here.
+Implementing them over preferences introduced fixed slots, dual banks, cursors,
+generated IDs, and migration machinery. Use native key enumeration with direct
+small-value access and explicit interrupted-update outcomes; applications with
+stronger persistence needs can supply a different Store.
 
 #### Preserve the Narrow HAL Through Compatibility Shims
 
