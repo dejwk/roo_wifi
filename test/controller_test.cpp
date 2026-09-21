@@ -254,6 +254,62 @@ TEST(StoreTest, EnumeratesCommittedProfiles) {
   EXPECT_EQ(visits, 1);
 }
 
+// Verifies empty enumeration, boundary IDs, and underlying failures.
+TEST(StoreTest, EnumerationBoundariesAndFailures) {
+  MemoryStore store;
+  int visits = 0;
+  EXPECT_EQ(store.forEachProfile([&](ProfileId) {
+    ++visits;
+    return true;
+  }),
+            Status::kOk);
+  EXPECT_EQ(visits, 0);
+
+  ProfileSettings settings;
+  settings.connection = TestConfig();
+  CredentialUpdate update;
+  update.intent = CredentialIntent::kClear;
+  ASSERT_EQ(store.saveProfile(1, settings, update), Status::kOk);
+  ASSERT_EQ(store.saveProfile(UINT32_MAX, settings, update), Status::kOk);
+  std::vector<ProfileId> ids;
+  ASSERT_EQ(store.forEachProfile([&](ProfileId id) {
+    ids.push_back(id);
+    return true;
+  }),
+            Status::kOk);
+  std::sort(ids.begin(), ids.end());
+  EXPECT_EQ(ids, (std::vector<ProfileId>{1, UINT32_MAX}));
+
+  store.enumeration_error = Status::kUnsupported;
+  EXPECT_EQ(store.forEachProfile([](ProfileId) { return true; }),
+            Status::kUnsupported);
+  store.enumeration_error = Status::kStorageFailure;
+  EXPECT_EQ(store.forEachProfile([](ProfileId) { return true; }),
+            Status::kStorageFailure);
+}
+
+// Verifies corrupt state aborts enumeration, while corruption after a ready
+// marker is reported by metadata loading rather than hiding the profile ID.
+TEST(StoreTest, EnumerationAndCorruptProfiles) {
+  MemoryStore store;
+  store.values["00000001state"] = {0xff};
+  EXPECT_EQ(store.forEachProfile([](ProfileId) { return true; }),
+            Status::kCorrupt);
+
+  store.values.clear();
+  store.values["00000002state"] = {0x11};
+  int visits = 0;
+  EXPECT_EQ(store.forEachProfile([&](ProfileId id) {
+    ++visits;
+    EXPECT_EQ(id, 2u);
+    Profile profile;
+    EXPECT_EQ(store.loadProfile(id, profile), Status::kCorrupt);
+    return true;
+  }),
+            Status::kOk);
+  EXPECT_EQ(visits, 1);
+}
+
 // Verifies the controller gates enumeration on its lifecycle and permits
 // profile reads from the visitor.
 TEST(ProfileEnumerationTest, ControllerFacade) {
@@ -279,6 +335,51 @@ TEST(ProfileEnumerationTest, ControllerFacade) {
     return true;
   }),
             Status::kOk);
+}
+
+// Verifies profile invalidation is delivered after persistence has settled, so
+// a listener can immediately rebuild its enumeration-derived model.
+TEST(ProfileEnumerationTest, ReloadsFromProfilesChanged) {
+  roo_scheduler::Scheduler scheduler;
+  TestStation native;
+  OrderedInterface radio(native);
+  MemoryStore store;
+  Controller controller(radio, store, scheduler);
+  ASSERT_EQ(controller.begin(), Status::kOk);
+  Pump(scheduler);
+
+  class ReloadingListener : public Controller::Listener {
+   public:
+    explicit ReloadingListener(Controller& controller)
+        : controller(controller) {}
+
+    void onProfilesChanged() override {
+      ++notifications;
+      ids.clear();
+      status = controller.forEachProfile([&](ProfileId id) {
+        ids.push_back(id);
+        return true;
+      });
+    }
+
+    Controller& controller;
+    int notifications = 0;
+    Status status = Status::kNotStarted;
+    std::vector<ProfileId> ids;
+  } listener(controller);
+  controller.addListener(listener);
+
+  ProfileSettings settings;
+  settings.connection = TestConfig("notified");
+  CredentialUpdate update;
+  update.intent = CredentialIntent::kClear;
+  ASSERT_NE(controller.saveProfile(23, settings, update).id, 0u);
+  Pump(scheduler);
+  EXPECT_EQ(listener.notifications, 1);
+  EXPECT_EQ(listener.status, Status::kOk);
+  EXPECT_EQ(listener.ids, (std::vector<ProfileId>{23}));
+
+  controller.removeListener(listener);
 }
 
 // Verifies Keep retains credentials, and metadata reads never return secret

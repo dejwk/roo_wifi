@@ -296,6 +296,10 @@ legacy hashed credential keys are ignored. Ready profiles are visited, while
 incomplete and deleted records are excluded. A consumer can therefore implement
 a saved-networks page without maintaining a second catalog. Neither scanning nor
 loading one profile implicitly builds or retains a complete saved list.
+Enumeration discovers committed IDs; it does not validate every metadata field.
+If a ready record is later corrupted, its ID is still visited and
+`loadProfile()` reports the read failure independently. Enumeration order is
+unspecified, and visitor-requested early termination returns `kStopped`.
 
 ### HAL Evolution and Native Event Correlation
 

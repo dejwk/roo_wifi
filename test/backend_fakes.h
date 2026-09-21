@@ -65,6 +65,7 @@ class MemoryStore : public FieldStore {
 
   /// Visits every field key in deterministic map order.
   Status enumerateFields(FieldVisitor visitor, void *context) const override {
+    if (enumeration_error != Status::kOk) return enumeration_error;
     for (const auto &entry : values) {
       if (!visitor(context, entry.first.data(), entry.first.size())) {
         return Status::kStopped;
@@ -78,6 +79,7 @@ class MemoryStore : public FieldStore {
   int fail_at = -1;
   bool enabled = false;
   Status enabled_error = Status::kOk;
+  Status enumeration_error = Status::kOk;
 };
 
 /// Provides a manually driven native station for ordered-interface tests.

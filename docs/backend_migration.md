@@ -57,6 +57,9 @@ call `connect(result.profile_id)` only from its successful result callback.
 The radio may be off while saving. A subsequent Disabled or connection failure
 does not undo persistence. `forEachProfile()` discovers committed profile keys
 without a separate catalog; profile identity remains application-assigned.
+Enumeration order is unspecified, visitor-requested early termination returns
+`kStopped`, and metadata corruption is reported by `loadProfile()` independently
+of discovery of the committed key.
 
 `connect(config, credentials)` makes a temporary connection without writing
 credentials. `connect(key)` copies the saved input before returning, so later
