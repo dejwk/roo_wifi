@@ -35,6 +35,9 @@ Status Enumerate(roo_prefs::EnumerateResult result) {
 
 PrefsStore::PrefsStore() : collection_("roo/wifi") {}
 
+PrefsStore::PrefsStore(roo_prefs::Store& store)
+    : collection_("roo/wifi", store) {}
+
 Status PrefsStore::begin() {
   roo_prefs::Transaction transaction(collection_);
   return transaction.active() ? Status::kOk : Status::kStorageFailure;

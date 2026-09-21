@@ -13,6 +13,10 @@ namespace roo_wifi {
 namespace {
 static_assert(std::is_same<WiFi, Esp32WiFi>::value,
               "ESP32 builds select Esp32WiFi as roo_wifi::WiFi");
+static_assert(
+    std::is_constructible<Esp32WiFi, roo_scheduler::Scheduler&,
+                          roo_prefs::Store&>::value,
+    "Esp32WiFi accepts a caller-owned roo_prefs backend");
 
 esp_ip4_addr_t Ip(uint8_t a, uint8_t b, uint8_t c, uint8_t d) {
   esp_ip4_addr_t result = {};
@@ -166,5 +170,21 @@ TEST(Esp32BackendTest, PreferencesReopen) {
   EXPECT_EQ(out.settings.connection.ssid.size, 9u);
   EXPECT_EQ(reopened.removeProfile(0x1234), Status::kOk);
   EXPECT_EQ(store.loadProfile(0x1234, out), Status::kNotFound);
+}
+
+// Verifies profile persistence can use a caller-owned roo_prefs backend.
+TEST(Esp32BackendTest, CustomPreferencesBackend) {
+  roo_prefs::PreferencesStore backend;
+  PrefsStore store(backend);
+  ASSERT_EQ(store.begin(), Status::kOk);
+  ProfileSettings settings;
+  settings.connection = TestConfig("custom-store");
+  CredentialUpdate update;
+  update.intent = CredentialIntent::kClear;
+  ASSERT_EQ(store.saveProfile(0x5678, settings, update), Status::kOk);
+  Profile out;
+  ASSERT_EQ(store.loadProfile(0x5678, out), Status::kOk);
+  EXPECT_EQ(out.settings.connection.ssid.size, 12u);
+  EXPECT_EQ(store.removeProfile(0x5678), Status::kOk);
 }
 }  // namespace roo_wifi

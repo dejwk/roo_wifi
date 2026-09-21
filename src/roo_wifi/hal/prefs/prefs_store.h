@@ -7,8 +7,12 @@ namespace roo_wifi {
 /// Stores known-key Wi-Fi profiles through the roo_prefs backend.
 class PrefsStore : public FieldStore {
  public:
-  /// Creates a roo_prefs-backed profile store.
+  /// Creates a profile store backed by roo_prefs' platform-default store.
   PrefsStore();
+
+  /// Creates a profile store backed by a caller-owned roo_prefs store.
+  /// @param store Backend that must outlive this adapter.
+  explicit PrefsStore(roo_prefs::Store& store);
 
   /// Opens the roo_prefs collection for subsequent operations.
   Status begin() override;
