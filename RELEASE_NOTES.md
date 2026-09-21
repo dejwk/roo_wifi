@@ -8,23 +8,6 @@
 
 ---
 
-# 2.0.0 — prepared, not published
-
-Breaking backend API replacement implementing `docs/wifi_backend_design.md`:
-portable construction, fixed-size SSID/credential values, typed operation IDs
-and results, bounded scans, exact authentication requirements, ordered native
-lifecycle handling, known-key profiles and explicit credential intent.
-
-Profile enumeration is available through the portable Store and Controller
-APIs. The preferences adapter discovers committed profiles using `roo_prefs`
-key enumeration without maintaining a separate catalog.
-
-ESP32 construction now uses `roo_wifi/esp32.h` and `Esp32WiFi::controller()`.
-Bazel native consumers depend on `:esp32`. See `docs/backend_migration.md` for
-headless provisioning, temporary connections, and caller migration. See
-`docs/backend_validation.md` for tested behavior and hardware/release gates.
-No release tag, registry update, or remote publication has been performed.
-
 # roo_wifi 1.1.6
 
 - Updated Roo dependencies in Bazel and PlatformIO: `roo_collections` 1.4.7, `roo_prefs` 1.3.2, `roo_backport` 1.2.4, and `roo_scheduler` 2.2.0.
