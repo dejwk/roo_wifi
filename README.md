@@ -44,8 +44,10 @@ wifi.forEachProfile([&](roo_wifi::ProfileId id) {
 });
 ```
 
-Enumeration order is unspecified and only complete, committed profiles are
-visited. It works independently of radio enablement after `begin()`.
+Enumeration order is unspecified. Each profile uses compact, versioned settings
+and secret values; an ID is still visited if either is corrupt so
+`loadProfile()` can report the error. Enumeration works independently of radio
+enablement after `begin()`.
 
 In a raw ESP-IDF application, initialize the default NVS partition before
 constructing `WiFi`; the adapter creates the default event loop, station
