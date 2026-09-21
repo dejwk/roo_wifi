@@ -145,12 +145,12 @@ class Controller : private Interface::Sink {
   /// @param out Receives settings on success and is unchanged on failure.
   Status loadProfile(ProfileId id, Profile &out) const;
 
-  /// Calls `visitor` once for every committed saved-profile ID.
+  /// Calls `visitor` once for every persisted saved-profile ID.
   ///
   /// The order is unspecified. Return false to stop early, in which case this
   /// returns Status::kStopped. Profile reads are allowed from the visitor, but
-  /// the store must not be modified during the call. A committed profile whose
-  /// metadata was later corrupted is still enumerated; loadProfile() reports
+  /// the store must not be modified during the call. A profile whose data was
+  /// later corrupted is still enumerated; loadProfile() reports
   /// that read failure independently.
   template <typename Visitor>
   Status forEachProfile(Visitor &&visitor) const {

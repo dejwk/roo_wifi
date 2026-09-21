@@ -18,7 +18,6 @@ enum class Status : uint8_t {
   kStorageFailure,
   kCommitUnknown,
   kCorrupt,
-  kIncomplete,
   /// Enumeration stopped because its visitor requested it.
   kStopped
 };

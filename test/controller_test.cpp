@@ -176,36 +176,92 @@ TEST_F(BackendTest, TemporaryConnectionDoesNotPersist) {
   EXPECT_TRUE(store.values.empty());
 }
 
-// Verifies all write interruptions leave either the previous ready record or
-// Incomplete.
-TEST(StoreTest, EveryInterruptedWriteAndRepair) {
+// A rejected settings replacement leaves the previous profile readable.
+TEST(StoreTest, FailedBlobWritePreservesPreviousProfile) {
   ProfileSettings p;
   p.connection = TestConfig();
   CredentialUpdate u;
   u.intent = CredentialIntent::kClear;
-  for (int failure = 1; failure <= 16; ++failure) {
-    MemoryStore store;
-    ASSERT_EQ(store.saveProfile(1, p, u), Status::kOk);
-    store.fail_at = store.writes + failure;
-    p.connection.hidden = true;
-    Status result = store.saveProfile(1, p, u);
-    EXPECT_NE(result, Status::kOk);
-    Profile out;
-    Status read = store.loadProfile(1, out);
-    EXPECT_EQ(read, failure == 1 ? Status::kOk : Status::kIncomplete);
-    if (failure != 1) {
-      CredentialUpdate keep;
-      EXPECT_NE(store.saveProfile(1, p, keep), Status::kOk);
-    }
-    store.fail_at = -1;
-    EXPECT_EQ(store.saveProfile(1, p, u), Status::kOk);
-    EXPECT_EQ(store.loadProfile(1, out), Status::kOk);
-    EXPECT_TRUE(out.settings.connection.hidden);
-  }
+  MemoryStore store;
+  ASSERT_EQ(store.saveProfile(1, p, u), Status::kOk);
+  store.fail_at = store.writes + 1;
+  p.connection.hidden = true;
+  EXPECT_EQ(store.saveProfile(1, p, u), Status::kStorageFailure);
+  Profile out;
+  ASSERT_EQ(store.loadProfile(1, out), Status::kOk);
+  EXPECT_FALSE(out.settings.connection.hidden);
+  store.fail_at = -1;
+  EXPECT_EQ(store.saveProfile(1, p, u), Status::kOk);
+  ASSERT_EQ(store.loadProfile(1, out), Status::kOk);
+  EXPECT_TRUE(out.settings.connection.hidden);
 }
 
-// Verifies deleted markers prevent resurrection when cleanup fails and can be
-// retried.
+// Verifies settings and credentials use separate compact versioned values.
+TEST(StoreTest, ProfileAndSecretBlobsRoundTripAllFields) {
+  MemoryStore store;
+  ProfileSettings settings;
+  settings.connection = TestConfig("complete-profile");
+  settings.connection.security = AuthMode::kWpa2Personal;
+  settings.connection.hidden = true;
+  settings.connection.ip_mode = IpMode::kStaticIpv4;
+  settings.connection.static_ipv4.address = {{192, 168, 7, 12}};
+  settings.connection.static_ipv4.gateway = {{192, 168, 7, 1}};
+  settings.connection.static_ipv4.dns1 = {{1, 1, 1, 1}};
+  settings.connection.static_ipv4.dns2 = {{8, 8, 8, 8}};
+  settings.connection.static_ipv4.prefix_length = 24;
+  settings.connection.static_ipv4.has_dns2 = true;
+  settings.connection.mac_policy = MacPolicy::kRandomized;
+  settings.auto_connect = false;
+  CredentialUpdate update;
+  update.intent = CredentialIntent::kReplace;
+  update.replacement.size = 8;
+  memcpy(update.replacement.bytes, "password", 8);
+
+  ASSERT_EQ(store.saveProfile(0x1234, settings, update), Status::kOk);
+  ASSERT_EQ(store.values.size(), 2u);
+  EXPECT_NE(store.values.find("p-00001234"), store.values.end());
+  EXPECT_NE(store.values.find("s-00001234"), store.values.end());
+
+  Profile profile;
+  ASSERT_EQ(store.loadProfile(0x1234, profile), Status::kOk);
+  EXPECT_EQ(profile.id, 0x1234u);
+  EXPECT_TRUE(profile.has_credentials);
+  EXPECT_EQ(profile.settings.connection.ssid.size,
+            settings.connection.ssid.size);
+  EXPECT_EQ(memcmp(profile.settings.connection.ssid.bytes,
+                   settings.connection.ssid.bytes,
+                   settings.connection.ssid.size),
+            0);
+  EXPECT_EQ(profile.settings.connection.security, AuthMode::kWpa2Personal);
+  EXPECT_TRUE(profile.settings.connection.hidden);
+  EXPECT_EQ(profile.settings.connection.ip_mode, IpMode::kStaticIpv4);
+  EXPECT_EQ(profile.settings.connection.static_ipv4.address.bytes[3], 12);
+  EXPECT_EQ(profile.settings.connection.static_ipv4.gateway.bytes[3], 1);
+  EXPECT_EQ(profile.settings.connection.static_ipv4.dns1.bytes[0], 1);
+  EXPECT_EQ(profile.settings.connection.static_ipv4.dns2.bytes[0], 8);
+  EXPECT_EQ(profile.settings.connection.static_ipv4.prefix_length, 24);
+  EXPECT_TRUE(profile.settings.connection.static_ipv4.has_dns2);
+  EXPECT_EQ(profile.settings.connection.mac_policy, MacPolicy::kRandomized);
+  EXPECT_FALSE(profile.settings.auto_connect);
+  Credentials credentials;
+  ASSERT_EQ(store.loadCredentials(0x1234, credentials), Status::kOk);
+  EXPECT_EQ(credentials.size, 8);
+  EXPECT_EQ(memcmp(credentials.bytes, "password", 8), 0);
+
+  std::vector<uint8_t> profile_data = store.values["p-00001234"];
+  int writes = store.writes;
+  memcpy(update.replacement.bytes, "new-pass", 8);
+  ASSERT_EQ(store.saveProfile(0x1234, settings, update), Status::kOk);
+  EXPECT_EQ(store.writes, writes + 1);
+  EXPECT_EQ(store.values["p-00001234"], profile_data);
+  ASSERT_EQ(store.loadCredentials(0x1234, credentials), Status::kOk);
+  EXPECT_EQ(memcmp(credentials.bytes, "new-pass", 8), 0);
+
+  store.values["p-00001234"].push_back(0);
+  EXPECT_EQ(store.loadProfile(0x1234, profile), Status::kCorrupt);
+}
+
+// Verifies a failed blob erase leaves the profile intact and can be retried.
 TEST(StoreTest, FailedDeleteCleanupAndRetry) {
   MemoryStore store;
   ProfileSettings p;
@@ -213,17 +269,17 @@ TEST(StoreTest, FailedDeleteCleanupAndRetry) {
   CredentialUpdate u;
   u.intent = CredentialIntent::kClear;
   ASSERT_EQ(store.saveProfile(7, p, u), Status::kOk);
-  store.fail_at = store.writes + 2;
+  store.fail_at = store.writes + 1;
   EXPECT_EQ(store.removeProfile(7), Status::kStorageFailure);
   Profile out;
-  EXPECT_EQ(store.loadProfile(7, out), Status::kNotFound);
+  EXPECT_EQ(store.loadProfile(7, out), Status::kOk);
   store.fail_at = -1;
   EXPECT_EQ(store.removeProfile(7), Status::kOk);
-  EXPECT_EQ(store.values.size(), 1u);
+  EXPECT_TRUE(store.values.empty());
 }
 
-// Verifies enumeration exposes only committed profiles and can stop early.
-TEST(StoreTest, EnumeratesCommittedProfiles) {
+// Verifies enumeration exposes only settings blobs and can stop early.
+TEST(StoreTest, EnumeratesProfiles) {
   MemoryStore store;
   ProfileSettings settings;
   settings.connection = TestConfig();
@@ -233,7 +289,7 @@ TEST(StoreTest, EnumeratesCommittedProfiles) {
   ASSERT_EQ(store.saveProfile(7, settings, update), Status::kOk);
   ASSERT_EQ(store.saveProfile(9, settings, update), Status::kOk);
   ASSERT_EQ(store.removeProfile(9), Status::kOk);
-  store.values["0000000bstate"] = {0x10};  // Interrupted save.
+  store.values["s-0000000b"] = {0x10};  // Orphaned secret is not a profile.
   store.values["not-a-profile"] = {0x11};
 
   std::vector<ProfileId> ids;
@@ -288,16 +344,10 @@ TEST(StoreTest, EnumerationBoundariesAndFailures) {
             Status::kStorageFailure);
 }
 
-// Verifies corrupt state aborts enumeration, while corruption after a ready
-// marker is reported by metadata loading rather than hiding the profile ID.
+// Verifies blob corruption is reported by loading without hiding the ID.
 TEST(StoreTest, EnumerationAndCorruptProfiles) {
   MemoryStore store;
-  store.values["00000001state"] = {0xff};
-  EXPECT_EQ(store.forEachProfile([](ProfileId) { return true; }),
-            Status::kCorrupt);
-
-  store.values.clear();
-  store.values["00000002state"] = {0x11};
+  store.values["p-00000002"] = {0xff};
   int visits = 0;
   EXPECT_EQ(store.forEachProfile([&](ProfileId id) {
     ++visits;
@@ -554,17 +604,16 @@ TEST_F(BackendTest, NativeHandoffOverflowFailsClosed) {
 }  // namespace roo_wifi
 
 namespace roo_wifi {
-// Verifies a failed ready write is reread, distinguishing confirmed completion
-// from an unreadable commit outcome without claiming atomic replacement.
-TEST(StoreTest, FinalCommitVerification) {
-  /// Simulates a final commit whose write result is ambiguous.
+// Verifies a failed settings write is reread to resolve an ambiguous outcome.
+TEST(StoreTest, SettingsCommitVerification) {
+  /// Persists the settings but reports their write as failed.
   class AmbiguousStore : public MemoryStore {
    public:
-    /// Writes the field but reports failure for the final ready marker.
+    /// Writes the blob but reports failure to its caller.
     Status writeField(const char* key, const uint8_t* data,
                       size_t size) override {
       Status status = MemoryStore::writeField(key, data, size);
-      if (std::string(key) == "00000001state" && data[0] == 0x11) {
+      if (std::string(key) == "p-00000001") {
         final_written = true;
         return Status::kStorageFailure;
       }

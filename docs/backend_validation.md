@@ -50,13 +50,13 @@ bazel build //:roo_windows_wifi //examples/simple:simple \
 - Radio-off provisioning, known startup keys, explicit credential intent,
   allocation-free profile enumeration, saved profiles surviving connection
   failure, and temporary unsaved connections.
-- Every marker/field interruption point, delete-cleanup retry, Keep failure on
-  incomplete data, readable ambiguous final commits, unreadable commits, and
-  unchanged outputs on read failure.
+- Failed settings replacement preserving the old profile, secret-only updates,
+  delete retry, readable ambiguous commits, unreadable commits, format
+  corruption, and unchanged outputs on read failure.
 - Production ESP32 harness selects exact security between same-SSID APs,
   switches connections, verifies static-to-DHCP reset and randomized/device MAC
   restoration, rejects zero/broadcast address readiness, rejects competing station
-  owners, and enumerates/reloads small profile fields through the actual
+  owners, and enumerates/reloads compact profile values through the actual
   preferences adapter.
 - The migrated UI model saves before connecting, reserves a caller-known key,
   and refuses ambiguous SSID-only security selection. The backend itself can
@@ -101,9 +101,9 @@ implementation behind the legacy 2.0.4 Bazel label; it is not a hardware test of
 Arduino 2.0.4 or IDF 4.4 binary-driver behavior.
 
 Arduino Preferences performs `nvs_set_blob` followed by `nvs_commit` before
-returning success. Each FieldStore field is a separate committed value; the
-Transaction object only opens/closes access. This establishes the intended
-ordered-write API dependency, not a measured power-cut durability result.
+returning success. Profile settings and secrets are separately committed
+values; the Transaction object only opens/closes access. This is not a measured
+power-cut durability result.
 
 No physical ESP32 serial device was available during implementation. Before
 publication, check ordinary switching, pre-association cancellation, cancellation

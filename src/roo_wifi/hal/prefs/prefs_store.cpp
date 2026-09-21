@@ -1,7 +1,5 @@
 #include "roo_wifi/hal/prefs/prefs_store.h"
 
-#include <cstring>
-
 namespace roo_wifi {
 namespace {
 
@@ -31,24 +29,6 @@ Status Enumerate(roo_prefs::EnumerateResult result) {
     default:
       return Status::kStorageFailure;
   }
-}
-
-/// Derives the legacy credential key associated with an SSID.
-void LegacyKey(const Ssid &ssid, char (&out)[16]) {
-  uint64_t hash = 525201411107845655ull;
-  for (size_t i = 0; i < ssid.size; ++i) {
-    hash ^= static_cast<char>(ssid.bytes[i]);
-    hash *= 0x5bd1e9955bd1e995ull;
-    hash ^= hash >> 47;
-  }
-  out[0] = 'p';
-  out[1] = 'w';
-  out[2] = '-';
-  for (int i = 0; i < 11; ++i) {
-    out[i + 3] = (hash & 0x3f) + 48;
-    hash >>= 6;
-  }
-  out[14] = 0;
 }
 
 }  // namespace
@@ -113,50 +93,6 @@ Status PrefsStore::enumerateFields(FieldVisitor visitor, void *context) const {
       collection_.forEachKey([visitor, context](roo::string_view key) {
         return visitor(context, key.data(), key.size());
       }));
-}
-
-Status PrefsStore::importLegacy(ProfileId id, const ProfileSettings &settings) {
-  const Ssid &ssid = settings.connection.ssid;
-  if (ssid.size == 0 || ssid.size > 32 ||
-      memchr(ssid.bytes, 0, ssid.size) != nullptr)
-    return Status::kInvalidArgument;
-  CredentialUpdate update;
-  update.intent = CredentialIntent::kClear;
-  if (settings.connection.security != AuthMode::kOpen) {
-    roo_prefs::Transaction t(collection_,
-                             roo_prefs::Transaction::Mode::kReadOnly);
-    if (!t.active()) return Status::kStorageFailure;
-    char key[16];
-    LegacyKey(ssid, key);
-    std::string password;
-    Status status = Read(t.store().readString(key, password));
-    if (status != Status::kOk) return status;
-    if (password.size() > 64) return Status::kCorrupt;
-    update.intent = CredentialIntent::kReplace;
-    update.replacement.size = password.size();
-    memcpy(update.replacement.bytes, password.data(), password.size());
-    update.replacement.encoding = settings.connection.security == AuthMode::kWep
-                                      ? CredentialEncoding::kWepKey
-                                  : password.size() == 64
-                                      ? CredentialEncoding::kRawPsk
-                                      : CredentialEncoding::kPassphrase;
-  }
-  return saveProfile(id, settings, update);
-}
-
-Status PrefsStore::readLegacyDefault(Ssid &out) const {
-  roo_prefs::Transaction t(collection_,
-                           roo_prefs::Transaction::Mode::kReadOnly);
-  if (!t.active()) return Status::kStorageFailure;
-  std::string ssid;
-  Status status = Read(t.store().readString("ssid", ssid));
-  if (status != Status::kOk) return status;
-  if (ssid.empty() || ssid.size() > 32) return Status::kCorrupt;
-  Ssid result;
-  result.size = ssid.size();
-  memcpy(result.bytes, ssid.data(), ssid.size());
-  out = result;
-  return Status::kOk;
 }
 
 }  // namespace roo_wifi

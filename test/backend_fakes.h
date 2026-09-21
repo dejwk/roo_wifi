@@ -51,7 +51,7 @@ class MemoryStore : public FieldStore {
   Status writeField(const char *key, const uint8_t *data,
                     size_t size) override {
     if (++writes == fail_at) return Status::kStorageFailure;
-    if (size > 64 || strlen(key) > 15) return Status::kInvalidArgument;
+    if (size > 71 || strlen(key) > 15) return Status::kInvalidArgument;
     values[key] = std::vector<uint8_t>(data, data + size);
     return Status::kOk;
   }

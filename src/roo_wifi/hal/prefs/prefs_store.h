@@ -21,16 +21,6 @@ class PrefsStore : public FieldStore {
   /// @param enabled Value to persist.
   Status writeEnabled(bool enabled) override;
 
-  /// Imports one legacy SSID/profile into an application profile key.
-  /// Security/settings are explicit; legacy preferences remain untouched.
-  /// @param id Nonzero destination profile key.
-  /// @param settings Settings paired with the legacy credentials.
-  Status importLegacy(ProfileId id, const ProfileSettings &settings);
-
-  /// Reads the legacy default SSID without importing it.
-  /// @param out Receives the SSID on success and is unchanged on failure.
-  Status readLegacyDefault(Ssid &out) const;
-
  protected:
   Status readField(const char *, uint8_t *, size_t &) const override;
   Status writeField(const char *, const uint8_t *, size_t) override;

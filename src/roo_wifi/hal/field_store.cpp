@@ -6,21 +6,94 @@
 namespace roo_wifi {
 namespace {
 
-constexpr uint8_t kIncomplete = 0x10;
-constexpr uint8_t kReady = 0x11;
-constexpr uint8_t kDeleted = 0x12;
-constexpr const char *kFields[] = {
-    "ssid", "auth",   "hidden",  "ip",  "addr", "gw",  "dns1",
-    "dns2", "prefix", "dns2set", "mac", "auto", "enc", "secret"};
+constexpr uint32_t kProfileMagic = 0x52575050;  // "RWPP"
+constexpr uint32_t kSecretMagic = 0x52575053;   // "RWPS"
+constexpr uint8_t kFormatVersion = 1;
+constexpr size_t kMaxProfileSize = 61;
+constexpr size_t kMaxSecretSize = 71;
 
-/// Parses the status-field key that identifies one profile record. Only keys
-/// shaped as eight lowercase hex digits followed by `state` are accepted, so
-/// radio enablement, legacy SSID/password entries, and every non-status profile
-/// field in the same collection are ignored.
-bool ProfileStateKey(const char *key, size_t size, ProfileId &id) {
-  if (size != 13 || memcmp(key + 8, "state", 5) != 0) return false;
+class Writer {
+ public:
+  Writer(uint8_t *begin, size_t capacity)
+      : begin_(begin), current_(begin), end_(begin + capacity) {}
+
+  void u8(uint8_t value) {
+    if (current_ == end_) {
+      ok_ = false;
+      return;
+    }
+    *current_++ = value;
+  }
+
+  void be32(uint32_t value) {
+    u8(value >> 24);
+    u8(value >> 16);
+    u8(value >> 8);
+    u8(value);
+  }
+
+  void bytes(const uint8_t *data, size_t size) {
+    if (size > static_cast<size_t>(end_ - current_)) {
+      ok_ = false;
+      return;
+    }
+    memcpy(current_, data, size);
+    current_ += size;
+  }
+
+  bool ok() const { return ok_; }
+  size_t size() const { return current_ - begin_; }
+
+ private:
+  uint8_t *begin_;
+  uint8_t *current_;
+  uint8_t *end_;
+  bool ok_ = true;
+};
+
+class Reader {
+ public:
+  Reader(const uint8_t *begin, size_t size)
+      : current_(begin), end_(begin + size) {}
+
+  uint8_t u8() {
+    if (current_ == end_) {
+      ok_ = false;
+      return 0;
+    }
+    return *current_++;
+  }
+
+  uint32_t be32() {
+    uint32_t value = static_cast<uint32_t>(u8()) << 24;
+    value |= static_cast<uint32_t>(u8()) << 16;
+    value |= static_cast<uint32_t>(u8()) << 8;
+    value |= u8();
+    return value;
+  }
+
+  void bytes(uint8_t *out, size_t size) {
+    if (size > static_cast<size_t>(end_ - current_)) {
+      ok_ = false;
+      return;
+    }
+    memcpy(out, current_, size);
+    current_ += size;
+  }
+
+  bool complete() const { return ok_ && current_ == end_; }
+
+ private:
+  const uint8_t *current_;
+  const uint8_t *end_;
+  bool ok_ = true;
+};
+
+/// Parses a compact profile key shaped as `p-` plus eight lowercase hex digits.
+bool ProfileKey(const char *key, size_t size, ProfileId &id) {
+  if (size != 10 || key[0] != 'p' || key[1] != '-') return false;
   ProfileId value = 0;
-  for (size_t i = 0; i < 8; ++i) {
+  for (size_t i = 2; i < 10; ++i) {
     char c = key[i];
     uint8_t digit;
     if (c >= '0' && c <= '9') {
@@ -37,156 +110,129 @@ bool ProfileStateKey(const char *key, size_t size, ProfileId &id) {
   return true;
 }
 
-/// Formats a stable field key for the supplied profile.
-void Key(ProfileId id, const char *field, char (&out)[16]) {
-  snprintf(out, sizeof(out), "%08lx%s", static_cast<unsigned long>(id), field);
+void Key(char kind, ProfileId id, char (&out)[11]) {
+  snprintf(out, sizeof(out), "%c-%08lx", kind,
+           static_cast<unsigned long>(id));
 }
 
-/// Encodes one field independently of C++ padding and ABI details.
-size_t Encode(size_t f, const ProfileSettings &s, const Credentials &c,
-              uint8_t *out) {
-  const ConnectionConfig &p = s.connection;
-  switch (f) {
-    case 0:
-      memcpy(out, p.ssid.bytes, p.ssid.size);
-      return p.ssid.size;
-    case 1:
-      out[0] = static_cast<uint8_t>(p.security);
-      break;
-    case 2:
-      out[0] = p.hidden;
-      break;
-    case 3:
-      out[0] = static_cast<uint8_t>(p.ip_mode);
-      break;
-    case 4:
-      memcpy(out, p.static_ipv4.address.bytes, 4);
-      return 4;
-    case 5:
-      memcpy(out, p.static_ipv4.gateway.bytes, 4);
-      return 4;
-    case 6:
-      memcpy(out, p.static_ipv4.dns1.bytes, 4);
-      return 4;
-    case 7:
-      memcpy(out, p.static_ipv4.dns2.bytes, 4);
-      return 4;
-    case 8:
-      out[0] = p.static_ipv4.prefix_length;
-      break;
-    case 9:
-      out[0] = p.static_ipv4.has_dns2;
-      break;
-    case 10:
-      out[0] = static_cast<uint8_t>(p.mac_policy);
-      break;
-    case 11:
-      out[0] = s.auto_connect;
-      break;
-    case 12:
-      out[0] = static_cast<uint8_t>(c.encoding);
-      break;
-    case 13:
-      memcpy(out, c.bytes, c.size);
-      return c.size;
-  }
-  return 1;
+size_t EncodeProfile(const ProfileSettings &settings,
+                     uint8_t (&data)[kMaxProfileSize]) {
+  const ConnectionConfig &config = settings.connection;
+  Writer out(data, sizeof(data));
+  out.be32(kProfileMagic);
+  out.u8(kFormatVersion);
+  out.u8(config.ssid.size);
+  out.bytes(config.ssid.bytes, config.ssid.size);
+  out.u8(static_cast<uint8_t>(config.security));
+  out.u8(config.hidden);
+  out.u8(static_cast<uint8_t>(config.ip_mode));
+  out.bytes(config.static_ipv4.address.bytes, 4);
+  out.bytes(config.static_ipv4.gateway.bytes, 4);
+  out.bytes(config.static_ipv4.dns1.bytes, 4);
+  out.bytes(config.static_ipv4.dns2.bytes, 4);
+  out.u8(config.static_ipv4.prefix_length);
+  out.u8(config.static_ipv4.has_dns2);
+  out.u8(static_cast<uint8_t>(config.mac_policy));
+  out.u8(settings.auto_connect);
+  return out.ok() ? out.size() : 0;
 }
 
-/// Decodes and validates one field from its stable byte representation.
-Status Decode(size_t f, const uint8_t *data, size_t n, ProfileSettings &s,
-              Credentials &c) {
-  ConnectionConfig &p = s.connection;
-  if (f == 0) {
-    if (n == 0 || n > 32) return Status::kCorrupt;
-    memcpy(p.ssid.bytes, data, n);
-    p.ssid.size = n;
-    return Status::kOk;
+Status DecodeProfile(const uint8_t *data, size_t size,
+                     ProfileSettings &settings) {
+  Reader in(data, size);
+  if (in.be32() != kProfileMagic || in.u8() != kFormatVersion) {
+    return Status::kCorrupt;
   }
-  if (f == 13) {
-    if (n > 64) return Status::kCorrupt;
-    memcpy(c.bytes, data, n);
-    c.size = n;
-    return Status::kOk;
+  ProfileSettings decoded;
+  ConnectionConfig &config = decoded.connection;
+  uint8_t ssid_size = in.u8();
+  if (ssid_size == 0 || ssid_size > sizeof(config.ssid.bytes)) {
+    return Status::kCorrupt;
   }
-  if (f >= 4 && f <= 7) {
-    if (n != 4) return Status::kCorrupt;
-    Ipv4Address *addresses[] = {&p.static_ipv4.address, &p.static_ipv4.gateway,
-                                &p.static_ipv4.dns1, &p.static_ipv4.dns2};
-    memcpy(addresses[f - 4]->bytes, data, 4);
-    return Status::kOk;
+  in.bytes(config.ssid.bytes, ssid_size);
+  config.ssid.size = ssid_size;
+  config.security = static_cast<AuthMode>(in.u8());
+  uint8_t hidden = in.u8();
+  config.ip_mode = static_cast<IpMode>(in.u8());
+  in.bytes(config.static_ipv4.address.bytes, 4);
+  in.bytes(config.static_ipv4.gateway.bytes, 4);
+  in.bytes(config.static_ipv4.dns1.bytes, 4);
+  in.bytes(config.static_ipv4.dns2.bytes, 4);
+  config.static_ipv4.prefix_length = in.u8();
+  uint8_t has_dns2 = in.u8();
+  config.mac_policy = static_cast<MacPolicy>(in.u8());
+  uint8_t auto_connect = in.u8();
+  if (hidden > 1 || has_dns2 > 1 || auto_connect > 1 || !in.complete()) {
+    return Status::kCorrupt;
   }
-  if (n != 1) return Status::kCorrupt;
-  uint8_t v = data[0];
-  if ((f == 2 || f == 9 || f == 11) && v > 1) return Status::kCorrupt;
-  switch (f) {
-    case 1:
-      p.security = static_cast<AuthMode>(v);
-      break;
-    case 2:
-      p.hidden = v != 0;
-      break;
-    case 3:
-      p.ip_mode = static_cast<IpMode>(v);
-      break;
-    case 8:
-      p.static_ipv4.prefix_length = v;
-      break;
-    case 9:
-      p.static_ipv4.has_dns2 = v != 0;
-      break;
-    case 10:
-      p.mac_policy = static_cast<MacPolicy>(v);
-      break;
-    case 11:
-      s.auto_connect = v != 0;
-      break;
-    case 12:
-      c.encoding = static_cast<CredentialEncoding>(v);
-      break;
+  config.hidden = hidden != 0;
+  config.static_ipv4.has_dns2 = has_dns2 != 0;
+  decoded.auto_connect = auto_connect != 0;
+  settings = decoded;
+  return Status::kOk;
+}
+
+size_t EncodeSecret(const Credentials &secret,
+                    uint8_t (&data)[kMaxSecretSize]) {
+  Writer out(data, sizeof(data));
+  out.be32(kSecretMagic);
+  out.u8(kFormatVersion);
+  out.u8(static_cast<uint8_t>(secret.encoding));
+  out.u8(secret.size);
+  out.bytes(secret.bytes, secret.size);
+  return out.ok() ? out.size() : 0;
+}
+
+Status DecodeSecret(const uint8_t *data, size_t size, Credentials &secret) {
+  Reader in(data, size);
+  if (in.be32() != kSecretMagic || in.u8() != kFormatVersion) {
+    return Status::kCorrupt;
   }
+  Credentials decoded;
+  decoded.encoding = static_cast<CredentialEncoding>(in.u8());
+  uint8_t secret_size = in.u8();
+  if (secret_size > sizeof(decoded.bytes)) return Status::kCorrupt;
+  in.bytes(decoded.bytes, secret_size);
+  if (!in.complete()) return Status::kCorrupt;
+  decoded.size = secret_size;
+  secret = decoded;
   return Status::kOk;
 }
 
 }  // namespace
 
-Status FieldStore::readStatus(ProfileId id) const {
-  if (id == 0) return Status::kInvalidArgument;
-  char key[16];
-  Key(id, "state", key);
-  uint8_t data[64];
-  size_t n = sizeof(data);
-  Status status = readField(key, data, n);
-  if (status != Status::kOk) return status;
-  if (n != 1) return Status::kCorrupt;
-  if (data[0] == kIncomplete) return Status::kIncomplete;
-  if (data[0] == kDeleted) return Status::kNotFound;
-  return data[0] == kReady ? Status::kOk : Status::kCorrupt;
-}
-
 Status FieldStore::read(ProfileId id, ProfileSettings &settings,
                         Credentials &secret) const {
-  Status status = readStatus(id);
+  if (id == 0) return Status::kInvalidArgument;
+  char key[11];
+  Key('p', id, key);
+  uint8_t profile_data[kMaxProfileSize];
+  size_t profile_size = sizeof(profile_data);
+  Status status = readField(key, profile_data, profile_size);
   if (status != Status::kOk) return status;
-  for (size_t f = 0; f < 14; ++f) {
-    char key[16];
-    Key(id, kFields[f], key);
-    uint8_t data[64];
-    size_t n = sizeof(data);
-    status = readField(key, data, n);
-    if (f == 13 && status == Status::kNotFound &&
-        settings.connection.security == AuthMode::kOpen) {
-      n = 0;
-      status = Status::kOk;
-    }
-    if (status != Status::kOk)
+
+  ProfileSettings decoded_settings;
+  status = DecodeProfile(profile_data, profile_size, decoded_settings);
+  if (status != Status::kOk) return status;
+
+  Credentials decoded_secret;
+  if (decoded_settings.connection.security != AuthMode::kOpen) {
+    Key('s', id, key);
+    uint8_t secret_data[kMaxSecretSize];
+    size_t secret_size = sizeof(secret_data);
+    status = readField(key, secret_data, secret_size);
+    if (status != Status::kOk) {
       return status == Status::kNotFound ? Status::kCorrupt : status;
-    status = Decode(f, data, n, settings, secret);
+    }
+    status = DecodeSecret(secret_data, secret_size, decoded_secret);
     if (status != Status::kOk) return status;
   }
-  return Validate(settings.connection, secret) == Status::kOk
-             ? Status::kOk
-             : Status::kCorrupt;
+  if (Validate(decoded_settings.connection, decoded_secret) != Status::kOk) {
+    return Status::kCorrupt;
+  }
+  settings = decoded_settings;
+  secret = decoded_secret;
+  return Status::kOk;
 }
 
 Status FieldStore::loadProfile(ProfileId id, Profile &out) const {
@@ -204,28 +250,17 @@ Status FieldStore::enumerateProfiles(ProfileVisitor visitor,
                                      void *context) const {
   if (visitor == nullptr) return Status::kInvalidArgument;
   struct Context {
-    const FieldStore *store;
     ProfileVisitor visitor;
     void *visitor_context;
-    Status status;
-  } state = {this, visitor, context, Status::kOk};
-  Status result = enumerateFields(
+  } state = {visitor, context};
+  return enumerateFields(
       [](void *opaque, const char *key, size_t size) {
         Context &state = *static_cast<Context *>(opaque);
         ProfileId id;
-        if (!ProfileStateKey(key, size, id)) return true;
-        Status status = state.store->readStatus(id);
-        if (status == Status::kNotFound || status == Status::kIncomplete) {
-          return true;
-        }
-        if (status != Status::kOk) {
-          state.status = status;
-          return false;
-        }
-        return state.visitor(state.visitor_context, id);
+        return !ProfileKey(key, size, id) ||
+               state.visitor(state.visitor_context, id);
       },
       &state);
-  return state.status == Status::kOk ? result : state.status;
 }
 
 Status FieldStore::loadCredentials(ProfileId id, Credentials &out) const {
@@ -251,64 +286,77 @@ Status FieldStore::saveProfile(ProfileId id, const ProfileSettings &settings,
       if (status != Status::kOk) return status;
       break;
     }
-    case CredentialIntent::kReplace: {
+    case CredentialIntent::kReplace:
       secret = update.replacement;
       break;
-    }
-    case CredentialIntent::kClear: {
+    case CredentialIntent::kClear:
       if (update.replacement.size != 0) return Status::kInvalidArgument;
       break;
-    }
-    default: {
+    default:
       return Status::kInvalidArgument;
-    }
   }
   Status status = Validate(settings.connection, secret);
   if (status != Status::kOk) return status;
-  char key[16];
-  Key(id, "state", key);
-  status = writeField(key, &kIncomplete, 1);
-  if (status != Status::kOk) return Status::kStorageFailure;
-  for (size_t f = 0; f < 14; ++f) {
-    uint8_t data[64];
-    size_t n = Encode(f, settings, secret, data);
-    Key(id, kFields[f], key);
-    status = n != 0 ? writeField(key, data, n) : eraseField(key);
-    if (status != Status::kOk) return Status::kIncomplete;
+
+  auto write_verified = [this](const char *key, const uint8_t *expected,
+                               size_t expected_size, size_t capacity) {
+    uint8_t actual[kMaxSecretSize];
+    size_t actual_size = capacity;
+    Status read_status = readField(key, actual, actual_size);
+    if (read_status == Status::kOk && actual_size == expected_size &&
+        memcmp(actual, expected, expected_size) == 0) {
+      return Status::kOk;
+    }
+    if (writeField(key, expected, expected_size) == Status::kOk) {
+      return Status::kOk;
+    }
+    actual_size = capacity;
+    read_status = readField(key, actual, actual_size);
+    if (read_status == Status::kOk && actual_size == expected_size &&
+        memcmp(actual, expected, expected_size) == 0) {
+      return Status::kOk;
+    }
+    return read_status == Status::kNotFound || read_status == Status::kOk
+               ? Status::kStorageFailure
+               : Status::kCommitUnknown;
+  };
+
+  char key[11];
+  if (update.intent == CredentialIntent::kReplace) {
+    uint8_t secret_data[kMaxSecretSize];
+    size_t secret_size = EncodeSecret(secret, secret_data);
+    Key('s', id, key);
+    status = write_verified(key, secret_data, secret_size, sizeof(secret_data));
+    if (status != Status::kOk) return status;
   }
-  Key(id, "state", key);
-  if (writeField(key, &kReady, 1) == Status::kOk) return Status::kOk;
-  // A failed final commit can still have reached storage. Verify every field.
-  status = readStatus(id);
-  if (status == Status::kIncomplete) return status;
-  if (status != Status::kOk) return Status::kCommitUnknown;
-  ProfileSettings stored;
-  Credentials stored_secret;
-  status = read(id, stored, stored_secret);
-  if (status != Status::kOk) return Status::kCommitUnknown;
-  for (size_t f = 0; f < 14; ++f) {
-    uint8_t expected[64];
-    uint8_t actual[64];
-    size_t a = Encode(f, settings, secret, expected);
-    size_t b = Encode(f, stored, stored_secret, actual);
-    if (a != b || memcmp(expected, actual, a) != 0)
-      return Status::kCommitUnknown;
+
+  uint8_t profile_data[kMaxProfileSize];
+  size_t profile_size = EncodeProfile(settings, profile_data);
+  Key('p', id, key);
+  status =
+      write_verified(key, profile_data, profile_size, sizeof(profile_data));
+  if (status != Status::kOk) return status;
+
+  if (update.intent == CredentialIntent::kClear) {
+    Key('s', id, key);
+    uint8_t existing[kMaxSecretSize];
+    size_t existing_size = sizeof(existing);
+    if (readField(key, existing, existing_size) != Status::kNotFound &&
+        eraseField(key) != Status::kOk) {
+      return Status::kStorageFailure;
+    }
   }
   return Status::kOk;
 }
 
 Status FieldStore::removeProfile(ProfileId id) {
   if (id == 0) return Status::kInvalidArgument;
-  char key[16];
-  Key(id, "state", key);
-  if (writeField(key, &kDeleted, 1) != Status::kOk)
-    return Status::kStorageFailure;
-  Status result = Status::kOk;
-  for (const char *field : kFields) {
-    Key(id, field, key);
-    if (eraseField(key) != Status::kOk) result = Status::kStorageFailure;
-  }
-  return result;
+  char key[11];
+  Key('p', id, key);
+  if (eraseField(key) != Status::kOk) return Status::kStorageFailure;
+  Key('s', id, key);
+  return eraseField(key) == Status::kOk ? Status::kOk
+                                        : Status::kStorageFailure;
 }
 
 }  // namespace roo_wifi

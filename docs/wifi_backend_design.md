@@ -208,7 +208,7 @@ HAL acceptance must not be presented as confirmed physical completion.
 `Store` provides allocation-free enumeration and direct access by profile key.
 It does not allocate profile IDs or maintain a separate catalog. An application
 can use a single fixed key for its provisioned network or enumerate multiple
-configurations. Enumeration reports committed profile IDs in unspecified order;
+configurations. Enumeration reports persisted profile IDs in unspecified order;
 the consumer loads metadata for the IDs it needs and derives its own presentation.
 
 Extend `Interface` and the ESP32 implementation to apply authentication,
@@ -223,12 +223,12 @@ connect or enable cycle.
 Credential updates have explicit keep/replace/clear intent. Reading profile
 metadata need not expose the old secret. Validate domain values in the backend
 for every caller; the UI additionally validates field text for useful feedback.
-A failed multi-field save can leave that profile unavailable; it must never
-silently expose a mixture of old and new settings as a valid configuration.
+A failed settings save leaves the prior settings readable when the backend
+confirms the replacement did not commit. It must never expose partial data.
 Connection failure does not implicitly delete saved settings. Unsupported
 non-default configuration is rejected rather than dropped.
 
-### Small Preferences Values and Known Keys
+### Versioned Profile Blobs and Known Keys
 
 Use `roo_prefs` as a small-value store, without building a profile database on
 top of it. `ProfileId` is a nonzero application-assigned 32-bit key; saving that
@@ -236,51 +236,29 @@ key creates or replaces its configuration. Zero means no profile. The applicatio
 owns key selection and reuse; deleting and recreating a key intentionally refers
 to the same application location, not a new generated identity.
 
-The preferences adapter addresses each field directly. A key consists of eight
-hexadecimal profile-ID digits plus a short field suffix, within the native key
-length limit. Store SSID bytes (at most 32), credential bytes (at most 64), and
-individual booleans/enums/IPv4 values separately. A small format/status value
-marks a profile as ready, incomplete, or deleted. No field exceeds 64 bytes;
-there are no slot limits, profile-list blobs, bank buffers, revision counters,
-or index writes. Enumeration recognizes status-field keys and uses `roo_prefs`
-key iteration, so profile updates cannot leave a separate index stale. Native
-storage exhaustion remains an explicit storage failure.
+The preferences adapter stores settings and credentials separately. Their keys
+are `p-XXXXXXXX` and `s-XXXXXXXX`, where `XXXXXXXX` is the lowercase hexadecimal
+profile ID. Both values have a magic number and format version. The settings
+value contains the length-delimited SSID plus fixed-width enums, booleans, and
+IPv4 fields; the secret value contains its encoding and length-delimited bytes.
+The largest settings and secret values are 61 and 71 bytes. There are no slot
+limits, catalogs, bank buffers, revision counters, status markers, or index
+writes. Enumeration recognizes only `p-` keys, so orphaned secret values are
+not exposed as profiles.
 
-A save loads the old credential only when Keep is requested, validates all input,
-and then performs these ordered writes:
-
-1. Persist an incomplete status before changing any field. If this fails, stop
-   without changing fields; report storage failure.
-2. Write each required field, checking every result. Clear removes stored secret
-   material logically. Omitted/default fields have explicit defaults in the
-   versioned schema; do not leave a stale static-IP setting active.
-3. Write ready status last, only after all field writes succeeded.
-
-Reads return Incomplete for an interrupted update and never return such data as
-usable configuration. A failed final status write requires rereading status and
-fields: confirm success only when the requested configuration is readable;
-otherwise report Incomplete, StorageFailure, or CommitUnknown when the outcome
-cannot be determined. A failed save does not promise preservation of the previous
-configuration. Recovery is an explicit replacement using complete input; Keep
-cannot recover an incomplete profile. This is a deliberate weaker contract than
-atomic replacement, adequate for provisioning without a custom transaction layer.
-
-Deletion writes deleted status first; after that, cleanup of individual fields
-can be retried without resurrecting the profile. A cleanup failure is reported,
-although lookup can already return NotFound. Logical deletion does not guarantee
-physical secure erasure. Repeated removal of a deleted key retries cleanup.
-
-This protocol requires ordered, durable successful writes from the concrete
-preferences adapter, verified in Phase 4. Namespace access through
-`roo_prefs::Transaction` does not establish that guarantee. Tests must prove that
-a completed incomplete marker survives before subsequent field changes can
-survive; otherwise this adapter cannot claim safe interrupted-update detection.
-No claim of cross-key atomicity is made.
+A save loads the old credential only when Keep is requested, validates all
+input, and uses bounded local marshalling. Values are compared before writing,
+so a credential-only replacement does not rewrite unchanged settings. A failed
+write is reread: an exact match confirms success, a confirmed old or missing
+value reports StorageFailure, and an unreadable result reports CommitUnknown.
+Reads reject bad magic, unsupported versions, truncation, trailing bytes,
+invalid lengths and invalid domain values as Corrupt. Deletion erases settings
+first, then the secret; a failed cleanup can be retried.
 
 Radio enablement remains a separate boolean. The application supplies a known
 startup profile key through Controller::Options (zero disables startup selection).
 When enabled, the controller loads only that profile and honors its auto-connect
-setting. Missing/incomplete startup data produces an explicit failure and no
+setting. Missing/corrupt startup data produces an explicit failure and no
 connection attempt; it does not trigger a search through saved profiles.
 
 #### Legacy Data and Profile Discovery
@@ -289,15 +267,14 @@ Retain legacy preferences. At explicit migration time, the application supplies 
 destination key and SSID (or reads the legacy default SSID), and the adapter reads
 the existing hashed password key directly. Security must be supplied or resolved
 before saving a usable profile; do not guess from password presence. Import uses
-the same save protocol and does not run automatically on scans or after deletion.
+the same blob save and does not run automatically on scans or after deletion.
 There is no full-store migration or requirement to discover legacy SSIDs.
-Profile enumeration considers only the new recoverable profile-key format;
-legacy hashed credential keys are ignored. Ready profiles are visited, while
-incomplete and deleted records are excluded. A consumer can therefore implement
+Profile enumeration considers only the versioned `p-XXXXXXXX` key format;
+legacy hashed credential keys are ignored. A consumer can therefore implement
 a saved-networks page without maintaining a second catalog. Neither scanning nor
 loading one profile implicitly builds or retains a complete saved list.
-Enumeration discovers committed IDs; it does not validate every metadata field.
-If a ready record is later corrupted, its ID is still visited and
+Enumeration discovers persisted IDs; it does not validate blob contents.
+If a record is later corrupted, its ID is still visited and
 `loadProfile()` reports the read failure independently. Enumeration order is
 unspecified, and visitor-requested early termination returns `kStopped`.
 
@@ -469,7 +446,7 @@ enum class Status : uint8_t {
   kStorageFailure,
   kCommitUnknown,
   kCorrupt,
-  kIncomplete,
+  kIncomplete,  // Retained for compatibility; FieldStore does not return it.
   kStopped
 };
 
@@ -550,7 +527,7 @@ class Store {
   virtual ~Store() = default;
   virtual Status begin() = 0;
   virtual Status loadProfile(ProfileId id, Profile& out) const = 0;
-  /// Visit committed profile IDs; false stops with Status::kStopped.
+  /// Visit persisted profile IDs; false stops with Status::kStopped.
   template <typename Visitor>
   Status forEachProfile(Visitor&& visitor) const;
   /// Privileged backend access, used only to construct connection input.
@@ -952,12 +929,12 @@ model or legacy API preservation is a condition of backend tests passing.
 
 ### Phase 4: Persist Connection Profiles and Credential Intent
 
-Implement profile enumeration and direct known-key load/save/remove using small preference values and
-the incomplete/ready/deleted status protocol above. Add caller-assigned profile
-keys, startup selection, keep/replace/clear intent, and explicit incomplete/error
+Implement profile enumeration and direct known-key load/save/remove using one
+versioned settings and secret values per profile. Add caller-assigned keys, startup
+selection, keep/replace/clear intent, and explicit storage/error
 results. Preserve old preferences and provide explicit import from a supplied
-SSID to a supplied profile key. Use `roo_prefs` key enumeration to discover ready
-status fields without a separate catalog; no full-store migration is needed.
+SSID to a supplied profile key. Use `roo_prefs` key enumeration to discover
+profile settings without a separate catalog; no full-store migration is needed.
 Support persistence with the radio off and temporary unsaved connections. Add
 headless usage documentation covering both single-key provisioning and repair
 of an interrupted save. Do not persist application proxy/metered policies here.
@@ -972,10 +949,10 @@ Proposed commit message:
 Validation: add and run `//:configuration_store_test` and affected controller
 tests. Use a preferences fake exposing field-key enumeration. Cover every
 interrupted-write point, marker/write/read errors, create/replace/remove/retry,
-Keep after incomplete save, storage exhaustion, legacy lookup, startup selection,
+Keep during replacement, storage exhaustion, legacy lookup, startup selection,
 and radio-off use. Verify ordered durability on the native preferences backend
-before claiming incomplete-update detection. Check that no stored value exceeds
-64 bytes and that enumeration excludes incomplete/deleted records without
+before claiming update durability. Check that no settings value exceeds 61
+bytes, no secret value exceeds 71 bytes, and enumeration ignores unrelated records without
 allocating a catalog.
 
 ### Phase 5: Implement Platform Connection Configuration

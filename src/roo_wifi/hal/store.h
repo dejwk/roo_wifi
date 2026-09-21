@@ -24,11 +24,11 @@ class Store {
   /// @param out Receives the profile on success and is unchanged on failure.
   virtual Status loadProfile(ProfileId id, Profile &out) const = 0;
 
-  /// Calls `visitor` once for every committed saved-profile ID.
+  /// Calls `visitor` once for every persisted saved-profile ID.
   ///
   /// The order is unspecified. Return false to stop early, in which case this
-  /// returns Status::kStopped. Incomplete and deleted profiles are not visited.
-  /// A committed profile whose metadata was later corrupted is still visited;
+  /// returns Status::kStopped. A profile whose data was later corrupted is
+  /// still visited;
   /// loadProfile() reports that read failure independently. Do not modify this
   /// store while it is being enumerated.
   template <typename Visitor>

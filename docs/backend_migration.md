@@ -55,11 +55,11 @@ new profiles require Replace; Keep requires a complete existing profile.
 Call `saveProfile(known_key, settings, update)`, remember its request ID, and
 call `connect(result.profile_id)` only from its successful result callback.
 The radio may be off while saving. A subsequent Disabled or connection failure
-does not undo persistence. `forEachProfile()` discovers committed profile keys
+does not undo persistence. `forEachProfile()` discovers persisted profile keys
 without a separate catalog; profile identity remains application-assigned.
 Enumeration order is unspecified, visitor-requested early termination returns
 `kStopped`, and metadata corruption is reported by `loadProfile()` independently
-of discovery of the committed key.
+of discovery of the persisted key.
 
 `connect(config, credentials)` makes a temporary connection without writing
 credentials. `connect(key)` copies the saved input before returning, so later
@@ -68,9 +68,10 @@ disconnect. Explicit disconnect suppresses automatic reconnect until another
 explicit connect or enable cycle. Startup reads only the configured key and
 honors that profile's `auto_connect` setting.
 
-An incomplete save requires replacement with complete input, never Keep.
-`CommitUnknown` requires rereading before assuming success. Deleted profiles
-remain absent even if physical field cleanup failed; retry deletion to clean up.
+Each profile uses a versioned settings value and a separate versioned secret
+value. Credential-only replacement does not rewrite unchanged settings.
+`CommitUnknown` requires rereading before assuming success. Failed deletion can
+be retried.
 `PrefsStore::importLegacy(key, settings)` explicitly imports only
 the supplied SSID's hashed legacy password. It never infers authentication from
 password presence or automatically migrates scans; old preferences remain.
