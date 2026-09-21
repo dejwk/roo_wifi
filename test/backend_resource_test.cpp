@@ -7,7 +7,18 @@
 #include "backend_fakes.h"
 #include "gtest/gtest.h"
 
+#if defined(__has_feature)
+#if __has_feature(address_sanitizer)
+#define ROO_WIFI_ADDRESS_SANITIZER 1
+#endif
+#endif
+
+#if defined(__SANITIZE_ADDRESS__)
+#define ROO_WIFI_ADDRESS_SANITIZER 1
+#endif
+
 namespace {
+#if !defined(ROO_WIFI_ADDRESS_SANITIZER)
 std::atomic<size_t> live{0}, peak{0}, allocations{0};
 
 /// Prefixes each tracked allocation with its requested byte count.
@@ -31,8 +42,10 @@ void RunResourceCycle(roo_wifi::Controller& controller,
   controller.loadProfile(1, profile);
   scheduler.pruneCanceled();
 }
+#endif
 }  // namespace
 
+#if !defined(ROO_WIFI_ADDRESS_SANITIZER)
 /// Tracks live heap bytes and allocation count for the resource regression.
 void* operator new(size_t size) {
   Allocation* p =
@@ -61,11 +74,16 @@ void* operator new[](size_t size) { return ::operator new(size); }
 void operator delete[](void* data) noexcept { ::operator delete(data); }
 
 void operator delete[](void* data, size_t) noexcept { ::operator delete(data); }
+#endif
 
 namespace roo_wifi {
 // Verifies bounded retained allocation across repeated scan/cancel/profile
 // work, and that all observation methods allocate zero bytes at N=0,20,40,100.
 TEST(BackendResourceTest, RetainedPlateauAndAllocationFreeObservation) {
+#if defined(ROO_WIFI_ADDRESS_SANITIZER)
+  GTEST_SKIP() << "The allocation counter replaces global new/delete, which "
+                  "is incompatible with AddressSanitizer's allocator.";
+#else
   for (uint16_t n : {0, 20, 40, 100}) {
     size_t baseline = live.load();
     peak = baseline;
@@ -111,5 +129,6 @@ TEST(BackendResourceTest, RetainedPlateauAndAllocationFreeObservation) {
         n, sizeof(ScanRecord), sizeof(Controller), sizeof(OrderedInterface),
         retained - baseline, peak.load() - baseline);
   }
+#endif
 }
 }  // namespace roo_wifi
