@@ -28,6 +28,12 @@ class FieldStore : public Store {
   /// @param id Nonzero profile key to remove.
   Status removeProfile(ProfileId id) override;
 
+  /// Loads the persisted last-successful profile ID.
+  Status readLastProfile(ProfileId &out) const override;
+
+  /// Persists or clears the last-successful profile ID.
+  Status writeLastProfile(ProfileId id) override;
+
  protected:
   /// Callback used internally to enumerate persisted field keys.
   using FieldVisitor = bool (*)(void *context, const char *key, size_t size);

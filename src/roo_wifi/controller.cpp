@@ -336,7 +336,12 @@ void Controller::finish(Slot& slot, Status status, int32_t native,
   result.has_native_code = has_native;
   slot = {};
   if (result.kind == OperationKind::kConnect && result.status != Status::kOk) {
-    reconnect_profile_ = 0;
+    if (result.status == Status::kConnectionFailed &&
+        reconnect_profile_ != 0 && enabled_ && !faulted_) {
+      reconnect_.scheduleAfter(roo_time::Seconds(5));
+    } else {
+      reconnect_profile_ = 0;
+    }
   }
   if (result.kind == OperationKind::kScan) {
     for (Listener* listener : listeners_) listener->onScanStateChanged(false);
@@ -355,7 +360,7 @@ void Controller::onOperationFinished(const OperationResult& result) {
     return;
   }
   Status status = result.status;
-  bool startup = false;
+  ProfileId last_profile = 0;
   if (status == Status::kOk && slot->state == Slot::State::kRunning) {
     if (result.kind == OperationKind::kScan) {
       Interface::ScanRead read;
@@ -370,12 +375,19 @@ void Controller::onOperationFinished(const OperationResult& result) {
       }
     } else if (result.kind == OperationKind::kEnable) {
       status = store_.writeEnabled(enabled_);
-      startup = status == Status::kOk && enabled_;
+      if (status == Status::kOk && enabled_) {
+        status = store_.readLastProfile(last_profile);
+        if (status == Status::kNotFound) status = Status::kOk;
+      }
+    } else if (result.kind == OperationKind::kConnect &&
+               slot->result.profile_id != 0) {
+      status = store_.writeLastProfile(slot->result.profile_id);
     }
   }
   finish(*slot, status, result.native_code, result.has_native_code);
-  if (startup && station_.result.id == 0 && lifecycle_ != Lifecycle::kClosed) {
-    reconnect_profile_ = options_.startup_profile;
+  if (last_profile != 0 && station_.result.id == 0 &&
+      lifecycle_ != Lifecycle::kClosed) {
+    reconnect_profile_ = last_profile;
     reconnect_.scheduleNow();
   }
 }

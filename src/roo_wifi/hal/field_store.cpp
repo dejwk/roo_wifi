@@ -355,8 +355,56 @@ Status FieldStore::removeProfile(ProfileId id) {
   Key('p', id, key);
   if (eraseField(key) != Status::kOk) return Status::kStorageFailure;
   Key('s', id, key);
-  return eraseField(key) == Status::kOk ? Status::kOk
-                                        : Status::kStorageFailure;
+  if (eraseField(key) != Status::kOk) return Status::kStorageFailure;
+  ProfileId last;
+  Status status = readLastProfile(last);
+  if (status == Status::kNotFound || (status == Status::kOk && last != id)) {
+    return Status::kOk;
+  }
+  if (status != Status::kOk) return status;
+  return writeLastProfile(0);
+}
+
+Status FieldStore::readLastProfile(ProfileId &out) const {
+  uint8_t data[4];
+  size_t size = sizeof(data);
+  Status status = readField("last", data, size);
+  if (status != Status::kOk) return status;
+  if (size != sizeof(data)) return Status::kCorrupt;
+  Reader in(data, size);
+  ProfileId id = in.be32();
+  if (!in.complete() || id == 0) return Status::kCorrupt;
+  out = id;
+  return Status::kOk;
+}
+
+Status FieldStore::writeLastProfile(ProfileId id) {
+  if (id == 0) {
+    return eraseField("last") == Status::kOk ? Status::kOk
+                                              : Status::kStorageFailure;
+  }
+  uint8_t expected[4];
+  Writer out(expected, sizeof(expected));
+  out.be32(id);
+  uint8_t actual[4];
+  size_t size = sizeof(actual);
+  Status status = readField("last", actual, size);
+  if (status == Status::kOk && size == sizeof(actual) &&
+      memcmp(actual, expected, sizeof(actual)) == 0) {
+    return Status::kOk;
+  }
+  if (writeField("last", expected, sizeof(expected)) == Status::kOk) {
+    return Status::kOk;
+  }
+  size = sizeof(actual);
+  status = readField("last", actual, size);
+  if (status == Status::kOk && size == sizeof(actual) &&
+      memcmp(actual, expected, sizeof(actual)) == 0) {
+    return Status::kOk;
+  }
+  return status == Status::kNotFound || status == Status::kOk
+             ? Status::kStorageFailure
+             : Status::kCommitUnknown;
 }
 
 }  // namespace roo_wifi

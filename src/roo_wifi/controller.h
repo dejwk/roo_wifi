@@ -16,11 +16,8 @@ namespace roo_wifi {
 /// admissions remain closed while profile operations remain available.
 class Controller : private Interface::Sink {
  public:
-  /// Configures controller capacity, timeouts, and optional startup connection.
+  /// Configures controller capacity and timeouts.
   struct Options {
-    /// Profile to connect after startup; zero disables automatic selection.
-    ProfileId startup_profile = 0;
-
     /// Maximum records retained from one scan.
     uint16_t max_scan_results = 100;
 
@@ -109,7 +106,7 @@ class Controller : private Interface::Sink {
   Controller &operator=(const Controller &) = delete;
 
   /// Initializes storage/radio; restores enablement asynchronously before
-  /// startup selection.
+  /// selecting the last successfully connected auto-connect profile.
   Status begin();
 
   /// Closes admission, cancels public work, and prevents subsequent callbacks.

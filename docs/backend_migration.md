@@ -29,7 +29,6 @@ roo_scheduler::Scheduler scheduler;
 MyRadio radio;
 MyStore store;
 roo_wifi::Controller::Options options;
-options.startup_profile = 1;  // Zero disables startup selection.
 roo_wifi::Controller wifi(radio, store, scheduler, options);
 roo_wifi::Status error = wifi.begin();
 ```
@@ -65,22 +64,22 @@ of discovery of the persisted key.
 credentials. `connect(key)` copies the saved input before returning, so later
 profile edits cannot change an admitted attempt. `removeProfile(key)` does not
 disconnect. Explicit disconnect suppresses automatic reconnect until another
-explicit connect or enable cycle. Startup reads only the configured key and
-honors that profile's `auto_connect` setting.
+explicit connect or enable cycle. A successful saved-profile connection becomes
+the persisted restart choice. Startup and radio re-enable load that profile and
+connect only when its `auto_connect` setting is true. Open profiles follow the
+same policy as credential-protected profiles; temporary connections are not
+remembered.
 
 Each profile uses a versioned settings value and a separate versioned secret
 value. Credential-only replacement does not rewrite unchanged settings.
 `CommitUnknown` requires rereading before assuming success. Failed deletion can
 be retried.
-`PrefsStore::importLegacy(key, settings)` explicitly imports only
-the supplied SSID's hashed legacy password. It never infers authentication from
-password presence or automatically migrates scans; old preferences remain.
 
 The existing `roo_windows_wifi::Configurator` takes the new Controller and an
 optional caller-known profile key (default 1). It stores one provisioned profile
 at that key, keeps its own display model, and no longer reads secrets for display.
-Its example uses the same key as Controller::Options::startup_profile. UI-owned
-SSID-only selection rejects ambiguity; explicit-security backend selection
+Its example uses one caller-known profile key. UI-owned SSID-only selection
+rejects ambiguity; explicit-security backend selection
 remains supported. Applications needing multiple remembered configurations can
 enumerate their assigned keys and load the corresponding non-secret metadata.
 

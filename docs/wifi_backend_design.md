@@ -29,7 +29,7 @@ The current [Controller](../src/roo_wifi/controller.h) coordinates an
 [Interface](../src/roo_wifi/hal/interface.h), [Store](../src/roo_wifi/hal/store.h),
 and scheduler. It serializes native notifications onto that scheduler. Its
 scan model primarily exposes SSID, open/secured state, and RSSI; the HAL already
-has richer AP authentication and radio metadata. The legacy store persists
+has richer AP authentication and radio metadata. The former store persisted
 radio enablement, default SSID, and passwords rather than enumerable profiles.
 
 The [ESP32 adapter](../src/roo_wifi/hal/esp32/idf_interface.h) uses
@@ -39,13 +39,10 @@ conditionally exposes an ESP32 convenience controller, but the current
 ESP32 Wi-Fi dependency. Portable class names alone do not establish build or
 behavioral independence from that platform.
 
-The upcoming [roo_prefs storage API](../../roo_prefs/src/roo_prefs/store/preferences_store.h)
+The [roo_prefs storage API](../../roo_prefs/src/roo_prefs/store/preferences_store.h)
 provides named-key reads/writes, blobs, explicit status codes, and allocation-free
-key iteration. Its [Transaction](../../roo_prefs/src/roo_prefs/transaction.h) opens
-and closes collection access; it is not an atomic multi-key commit. The current
-[Wi-Fi preferences adapter](../src/roo_wifi/hal/prefs/prefs_store.cpp)
-stores passwords under hashes of SSIDs and stores only the default SSID in
-recoverable text. This constrains both enumeration and legacy migration.
+key iteration. Its [Transaction](../../roo_prefs/src/roo_prefs/transaction.h)
+opens and closes collection access; it is not an atomic multi-key commit.
 
 ## Requirements
 
@@ -60,8 +57,8 @@ recoverable text. This constrains both enumeration and legacy migration.
 5. Preserve native event identity/order and safe listener/input lifetimes through
    asynchronous dispatch, including cancellation and destruction.
 6. Support enumeration, lookup, and updates of saved configurations, explicit
-   credential intent, reuse of recoverable legacy data, and reported storage
-   failures without maintaining a separate profile catalog.
+   credential intent, and reported storage failures without maintaining a
+   separate profile catalog.
 7. Apply supported hidden-network, reconnect, DHCP/static IPv4, and station MAC
    configuration; report actual support and available link diagnostics.
 8. Keep public domain and HAL contracts free of ESP32/Arduino/RTOS-specific types.
@@ -255,22 +252,18 @@ Reads reject bad magic, unsupported versions, truncation, trailing bytes,
 invalid lengths and invalid domain values as Corrupt. Deletion erases settings
 first, then the secret; a failed cleanup can be retried.
 
-Radio enablement remains a separate boolean. The application supplies a known
-startup profile key through Controller::Options (zero disables startup selection).
-When enabled, the controller loads only that profile and honors its auto-connect
-setting. Missing/corrupt startup data produces an explicit failure and no
-connection attempt; it does not trigger a search through saved profiles.
+Radio enablement remains a separate boolean. A successful connection through a
+saved profile persists that profile ID as the last successful selection. On
+startup or radio re-enable, the controller loads that profile and reconnects
+only when its auto-connect setting is true. This policy is independent of
+whether the profile is open or credential-protected. Temporary connections do
+not replace the saved selection. Missing/corrupt selection data produces an
+explicit failure and does not trigger a search through saved profiles.
 
-#### Legacy Data and Profile Discovery
+#### Profile Discovery
 
-Retain legacy preferences. At explicit migration time, the application supplies a
-destination key and SSID (or reads the legacy default SSID), and the adapter reads
-the existing hashed password key directly. Security must be supplied or resolved
-before saving a usable profile; do not guess from password presence. Import uses
-the same blob save and does not run automatically on scans or after deletion.
-There is no full-store migration or requirement to discover legacy SSIDs.
-Profile enumeration considers only the versioned `p-XXXXXXXX` key format;
-legacy hashed credential keys are ignored. A consumer can therefore implement
+Profile enumeration considers only the versioned `p-XXXXXXXX` key format.
+Unsupported preference layouts are ignored rather than migrated. A consumer can therefore implement
 a saved-networks page without maintaining a second catalog. Neither scanning nor
 loading one profile implicitly builds or retains a complete saved list.
 Enumeration discovers persisted IDs; it does not validate blob contents.
@@ -446,7 +439,6 @@ enum class Status : uint8_t {
   kStorageFailure,
   kCommitUnknown,
   kCorrupt,
-  kIncomplete,  // Retained for compatibility; FieldStore does not return it.
   kStopped
 };
 
@@ -536,6 +528,8 @@ class Store {
   virtual Status saveProfile(ProfileId id, const ProfileSettings& settings,
                              const CredentialUpdate& credential) = 0;
   virtual Status removeProfile(ProfileId id) = 0;
+  virtual Status readLastProfile(ProfileId& out) const = 0;
+  virtual Status writeLastProfile(ProfileId id) = 0;
   virtual Status readEnabled(bool& out) const = 0;
   virtual Status writeEnabled(bool enabled) = 0;
 
@@ -634,7 +628,6 @@ class Interface {
 class Controller {
  public:
   struct Options {
-    ProfileId startup_profile = 0;
     uint16_t max_scan_results = 100;
     uint32_t scan_timeout_ms = 15000;
     uint32_t connect_timeout_ms = 30000;
@@ -749,14 +742,17 @@ class Controller {
   lengths/encoding for the selected mode. Unknown security cannot be saved as a
   usable profile or used to connect.
 - `saveProfile(id, ...)` creates or replaces the caller's nonzero key. Zero is
-  InvalidArgument. Incomplete means replacement input is needed; CommitUnknown
-  requires rereading before assuming success. A storage failure does not imply
+  InvalidArgument. CommitUnknown requires rereading before assuming success. A
+  storage failure does not imply
   the previous settings survived. Snapshot generation only versions scan data.
 - Persisted enablement is a separate Store update. `setEnabled()` first performs
   the HAL transition and then writes the preference; on persistence failure its
   operation fails but the physical state may already have changed. Report actual
   state, rather than claiming a transaction spans hardware and flash. Do not
-  auto-connect before enablement handling completes. Use `isEnabled()` and `onEnabledChanged()` to observe physical state
+  auto-connect before enablement handling completes. The last successfully
+  connected saved profile is persisted and selected after restart or radio
+  re-enable when its `auto_connect` flag is true, including for open networks.
+  Use `isEnabled()` and `onEnabledChanged()` to observe physical state
   independently of the operation's persistence result.
 
 The omitted controller state is bounded: one scan buffer with retained capacity
@@ -932,9 +928,8 @@ model or legacy API preservation is a condition of backend tests passing.
 Implement profile enumeration and direct known-key load/save/remove using one
 versioned settings and secret values per profile. Add caller-assigned keys, startup
 selection, keep/replace/clear intent, and explicit storage/error
-results. Preserve old preferences and provide explicit import from a supplied
-SSID to a supplied profile key. Use `roo_prefs` key enumeration to discover
-profile settings without a separate catalog; no full-store migration is needed.
+results. Use `roo_prefs` key enumeration to discover profile settings without a
+separate catalog. Unsupported preference layouts are not migrated.
 Support persistence with the radio off and temporary unsaved connections. Add
 headless usage documentation covering both single-key provisioning and repair
 of an interrupted save. Do not persist application proxy/metered policies here.
@@ -944,12 +939,12 @@ Proposed commit message:
 > Wi-Fi Backend Foundation Phase 4: persist known Wi-Fi configurations.
 >
 > Add small-value preferences, explicit credential intent and interrupted-save
-> detection, with known-key provisioning and legacy credential import.
+> detection, with known-key provisioning.
 
 Validation: add and run `//:configuration_store_test` and affected controller
 tests. Use a preferences fake exposing field-key enumeration. Cover every
 interrupted-write point, marker/write/read errors, create/replace/remove/retry,
-Keep during replacement, storage exhaustion, legacy lookup, startup selection,
+Keep during replacement, storage exhaustion, last-profile selection,
 and radio-off use. Verify ordered durability on the native preferences backend
 before claiming update durability. Check that no settings value exceeds 61
 bytes, no secret value exceeds 71 bytes, and enumeration ignores unrelated records without
@@ -1007,7 +1002,7 @@ platform or Material 3 UI is required for backend acceptance.
 - Native adapter tests cover ordered switching, cancellation, same-SSID retry,
   IP-state interpretation and teardown; hardware checks address SDK-sensitive cases.
 - Store tests cover enumeration, known-key access, small values, interrupted-save
-  detection, error reporting, legacy lookup, credentials, startup selection, and
+  detection, error reporting, credentials, last-profile selection, and
   radio-off use.
 - Configuration tests cover authentication enforcement, hidden networks,
   reconnect policy, static-to-DHCP transitions and available diagnostics.

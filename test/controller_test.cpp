@@ -274,8 +274,11 @@ TEST(StoreTest, FailedDeleteCleanupAndRetry) {
   Profile out;
   EXPECT_EQ(store.loadProfile(7, out), Status::kOk);
   store.fail_at = -1;
+  ASSERT_EQ(store.writeLastProfile(7), Status::kOk);
   EXPECT_EQ(store.removeProfile(7), Status::kOk);
   EXPECT_TRUE(store.values.empty());
+  ProfileId last;
+  EXPECT_EQ(store.readLastProfile(last), Status::kNotFound);
 }
 
 // Verifies enumeration exposes only settings blobs and can stop early.
@@ -530,8 +533,8 @@ TEST(TimeoutTest, MonitorsAtDeadlineRatherThanPolling) {
   EXPECT_GT(scheduler.getNearestExecutionDelay(), roo_time::Millis(500));
 }
 
-// Verifies disabled provisioning, startup selection, and owned profile input.
-TEST(StartupTest, KnownProfileAndAdmissionSnapshot) {
+// Verifies the last successful open profile is selected after radio enablement.
+TEST(StartupTest, LastProfileAndAdmissionSnapshot) {
   roo_scheduler::Scheduler scheduler;
   TestStation native;
   OrderedInterface radio(native);
@@ -540,14 +543,12 @@ TEST(StartupTest, KnownProfileAndAdmissionSnapshot) {
   settings.connection = TestConfig("saved");
   CredentialUpdate update;
   update.intent = CredentialIntent::kClear;
-  Controller::Options options;
-  options.startup_profile = 1;
-  Controller controller(radio, store, scheduler, options);
+  ASSERT_EQ(store.saveProfile(1, settings, update), Status::kOk);
+  ASSERT_EQ(store.writeLastProfile(1), Status::kOk);
+  Controller controller(radio, store, scheduler);
   ASSERT_EQ(controller.begin(), Status::kOk);
   Pump(scheduler);
   ASSERT_FALSE(controller.isEnabled());
-  EXPECT_NE(controller.saveProfile(1, settings, update).id, 0u);
-  Pump(scheduler);
   EXPECT_EQ(native.connects, 0);
   controller.setEnabled(true);
   Pump(scheduler);
@@ -557,6 +558,56 @@ TEST(StartupTest, KnownProfileAndAdmissionSnapshot) {
   controller.saveProfile(1, settings, update);
   Pump(scheduler);
   EXPECT_EQ(native.last_config.ssid.bytes[0], 's');
+}
+
+// Verifies a successful saved-profile connection becomes the restart choice,
+// while a temporary connection does not replace it.
+TEST_F(BackendTest, RemembersLastSuccessfulSavedProfile) {
+  ProfileSettings settings;
+  settings.connection = TestConfig("remembered-open");
+  CredentialUpdate update;
+  update.intent = CredentialIntent::kClear;
+  ASSERT_EQ(store.saveProfile(31, settings, update), Status::kOk);
+
+  ASSERT_NE(controller.connect(31).id, 0u);
+  Pump(scheduler);
+  native.associated();
+  native.ready();
+  Pump(scheduler);
+  ProfileId last = 0;
+  EXPECT_EQ(store.readLastProfile(last), Status::kOk);
+  EXPECT_EQ(last, 31u);
+
+  ASSERT_NE(controller.connect(TestConfig("temporary"), {}).id, 0u);
+  Pump(scheduler);
+  native.disconnected();
+  Pump(scheduler);
+  native.associated();
+  native.ready();
+  Pump(scheduler);
+  ASSERT_EQ(store.readLastProfile(last), Status::kOk);
+  EXPECT_EQ(last, 31u);
+}
+
+// A remembered profile with auto-connect disabled is not started.
+TEST(StartupTest, AutoConnectOptOutIncludesOpenProfiles) {
+  roo_scheduler::Scheduler scheduler;
+  TestStation native;
+  OrderedInterface radio(native);
+  MemoryStore store;
+  ProfileSettings settings;
+  settings.connection = TestConfig("manual-open");
+  settings.auto_connect = false;
+  CredentialUpdate update;
+  update.intent = CredentialIntent::kClear;
+  ASSERT_EQ(store.saveProfile(9, settings, update), Status::kOk);
+  ASSERT_EQ(store.writeLastProfile(9), Status::kOk);
+  store.enabled = true;
+
+  Controller controller(radio, store, scheduler);
+  ASSERT_EQ(controller.begin(), Status::kOk);
+  Pump(scheduler);
+  EXPECT_EQ(native.connects, 0);
 }
 
 // Verifies successful persistence remains saved after a connection fails.
@@ -574,6 +625,24 @@ TEST_F(BackendTest, SavedProfileSurvivesNativeRejection) {
   EXPECT_EQ(observer.results.back().status, Status::kConnectionFailed);
   Profile out;
   EXPECT_EQ(controller.loadProfile(1, out), Status::kOk);
+}
+
+// An auto-connect profile remains eligible when it is temporarily unavailable.
+TEST_F(BackendTest, RetriesUnavailableSavedProfile) {
+  ProfileSettings settings;
+  settings.connection = TestConfig("later-open");
+  CredentialUpdate update;
+  update.intent = CredentialIntent::kClear;
+  ASSERT_EQ(store.saveProfile(5, settings, update), Status::kOk);
+  native.rejection = Status::kConnectionFailed;
+  ASSERT_NE(controller.connect(5).id, 0u);
+  Pump(scheduler);
+  EXPECT_EQ(native.connects, 1);
+
+  native.rejection = Status::kOk;
+  scheduler.delay(roo_time::Seconds(6));
+  Pump(scheduler);
+  EXPECT_EQ(native.connects, 2);
 }
 
 // Verifies cancellation before queued native execution emits one result and no

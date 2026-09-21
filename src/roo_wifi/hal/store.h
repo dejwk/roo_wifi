@@ -57,6 +57,14 @@ class Store {
   /// @param id Nonzero profile key to remove.
   virtual Status removeProfile(ProfileId id) = 0;
 
+  /// Reads the last successfully connected saved profile.
+  /// @param out Receives a nonzero profile ID on success.
+  virtual Status readLastProfile(ProfileId &out) const = 0;
+
+  /// Persists the last successfully connected saved profile.
+  /// @param id Nonzero profile ID, or zero to clear the selection.
+  virtual Status writeLastProfile(ProfileId id) = 0;
+
   /// Reads persisted radio enablement.
   /// @param out Receives the stored value on success.
   virtual Status readEnabled(bool &out) const = 0;

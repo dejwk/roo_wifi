@@ -25,7 +25,8 @@ struct ProfileSettings {
   /// Connection settings to persist.
   ConnectionConfig connection;
 
-  /// Whether the controller may reconnect this profile automatically.
+  /// Whether the controller may reconnect this profile automatically,
+  /// regardless of whether the network requires credentials.
   bool auto_connect = true;
 };
 

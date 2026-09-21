@@ -49,6 +49,12 @@ and secret values; an ID is still visited if either is corrupt so
 `loadProfile()` can report the error. Enumeration works independently of radio
 enablement after `begin()`.
 
+After a saved-profile connection succeeds, its ID is remembered. On restart or
+radio re-enable, that profile reconnects when its `auto_connect` setting is true.
+This applies equally to open and credential-protected profiles. Temporary
+connections are never remembered, and explicitly disabling auto-connect keeps a
+remembered profile from being started automatically.
+
 In a raw ESP-IDF application, initialize the default NVS partition before
 constructing `WiFi`; the adapter creates the default event loop, station
 netif, and Wi-Fi driver only when they are not already initialized. In either
