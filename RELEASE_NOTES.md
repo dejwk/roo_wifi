@@ -1,3 +1,13 @@
+# roo_wifi 2.0.0
+
+- Replaced the Wi‑Fi backend with a portable controller API, typed operations/results, bounded scans, and explicit credential/authentication handling.
+- Added saved-profile enumeration, custom `roo_prefs` storage support, and automatic reconnection of the last successful auto-connect profile.
+- Switched the ESP32 adapter to ESP-IDF; use `roo_wifi/esp32.h` and `Esp32WiFi`.
+- Added Arduino and native ESP-IDF scan examples, migration guidance, and expanded backend coverage.
+- Updated dependencies: `roo_testing` 2.2.0 and `roo_prefs` 2.0.0.
+
+---
+
 # 2.0.0 — prepared, not published
 
 Breaking backend API replacement implementing `docs/wifi_backend_design.md`:
