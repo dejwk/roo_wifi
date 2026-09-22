@@ -79,6 +79,7 @@ test_suite(
     name = "interface_conformance_test",
     tests = [
         "//test:controller_test",
+        "//test:state_machine_test",
         "//test:esp32_backend_test",
     ],
 )

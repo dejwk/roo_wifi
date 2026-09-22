@@ -13,10 +13,15 @@ namespace roo_wifi {
 
 /// Adapts a platform radio to the controller's asynchronous operation model.
 /// All sink delivery is deferred and serialized on the supplied scheduler.
-/// begin must not emit callbacks. Commands copy their inputs and
-/// return admission only. A successful scan read must copy the complete bounded
-/// result; on failure it must leave the caller's buffer and ScanRead unchanged.
-/// shutdown detaches producers and neutralizes queued work before returning.
+/// begin() must not emit callbacks. Commands carrying an operation ID copy
+/// their inputs and return admission only: kOk promises a deferred
+/// Sink::onOperationFinished() result,
+/// while a rejected command must not later emit a completion for that ID.
+/// Cancellation completes the original operation rather than introducing a
+/// second operation ID. shutdown() may discard pending completions. A
+/// successful scan read must copy the complete bounded result; on failure it
+/// must leave the caller's buffer and ScanRead unchanged. shutdown detaches
+/// producers and neutralizes queued work before returning.
 class Interface {
  public:
   /// Reports the number of scan records copied by a radio adapter.
@@ -51,6 +56,8 @@ class Interface {
   virtual ~Interface() = default;
 
   /// Attaches the controller sink and scheduler without emitting callbacks.
+  /// The adapter borrows both dependencies until shutdown(). Native producers
+  /// may run on other threads, but must hand events off to this scheduler.
   /// @param sink Receiver of deferred radio events.
   /// @param scheduler Context on which events are delivered.
   virtual Status begin(Sink &sink, roo_scheduler::Scheduler &scheduler) = 0;
@@ -66,7 +73,7 @@ class Interface {
   /// Starts a bounded network scan.
   /// @param id Nonzero operation ID echoed in the deferred completion.
   /// @param max_results Maximum records to retain.
-  virtual Status scan(OperationId id, uint16_t max_results) = 0;
+  virtual Status startScan(OperationId id, uint16_t max_results) = 0;
 
   /// Starts a connection and reports success only after address readiness.
   /// @param id Nonzero operation ID echoed in the deferred completion.
@@ -79,11 +86,18 @@ class Interface {
   /// @param id Nonzero operation ID echoed in the deferred completion.
   virtual Status disconnect(OperationId id) = 0;
 
-  /// Cancels a pending radio operation.
-  /// @param target ID that completes with kCancelled rather than a new ID.
-  virtual Status cancel(OperationId target) = 0;
+  /// Requests cancellation of the active scan.
+  /// Returning kOk does not mean teardown is finished: the original scan
+  /// operation completes asynchronously with its original ID.
+  virtual Status cancelScan() = 0;
+
+  /// Requests cancellation of the active connection attempt.
+  /// Completion is delivered after native teardown; the call does not wait.
+  virtual Status cancelConnect() = 0;
 
   /// Copies records from a completed scan into caller-owned storage.
+  /// A successful read copies the complete retained result into @p out.
+  /// Failure leaves both the destination array and @p result unchanged.
   /// @param out Destination record array.
   /// @param capacity Number of records that fit in @p out.
   /// @param result Receives count and truncation state on success.

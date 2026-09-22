@@ -13,10 +13,9 @@ namespace roo_wifi {
 namespace {
 static_assert(std::is_same<WiFi, Esp32WiFi>::value,
               "ESP32 builds select Esp32WiFi as roo_wifi::WiFi");
-static_assert(
-    std::is_constructible<Esp32WiFi, roo_scheduler::Scheduler&,
-                          roo_prefs::Store&>::value,
-    "Esp32WiFi accepts a caller-owned roo_prefs backend");
+static_assert(std::is_constructible<Esp32WiFi, roo_scheduler::Scheduler&,
+                                    roo_prefs::Store&>::value,
+              "Esp32WiFi accepts a caller-owned roo_prefs backend");
 
 esp_ip4_addr_t Ip(uint8_t a, uint8_t b, uint8_t c, uint8_t d) {
   esp_ip4_addr_t result = {};
@@ -47,19 +46,14 @@ TEST(Esp32BackendTest, EnableWhileSchedulerWaits) {
   scheduler.delay(roo_time::Millis(50));
   ASSERT_FALSE(controller.isEnabled());
   auto request = controller.setEnabled(true);
-  ASSERT_EQ(request.status, Status::kOk);
+  ASSERT_EQ(request, Status::kOk);
   scheduler.delay(roo_time::Millis(500));
   EXPECT_TRUE(controller.isEnabled());
-  ASSERT_FALSE(observer.results.empty());
-  EXPECT_EQ(observer.results.back().id, request.id);
-  EXPECT_EQ(observer.results.back().status, Status::kOk);
   for (bool enabled : {false, true, true, false}) {
     request = controller.setEnabled(enabled);
-    ASSERT_EQ(request.status, Status::kOk);
+    ASSERT_EQ(request, Status::kOk);
     scheduler.delay(roo_time::Millis(50));
     EXPECT_EQ(controller.isEnabled(), enabled);
-    EXPECT_EQ(observer.results.back().id, request.id);
-    EXPECT_EQ(observer.results.back().status, Status::kOk);
   }
   controller.shutdown();
 }
@@ -69,6 +63,7 @@ TEST(Esp32BackendTest, EnableWhileSchedulerWaits) {
 TEST(Esp32BackendTest, SecuritySelectionAndSwitch) {
   using namespace roo_testing_transducers::wifi;
   static Environment environment;
+  environment.setScanDurationMs(20);
   auto open = std::make_unique<AccessPoint>(
       roo_testing_transducers::wifi::MacAddress(2, 0, 0, 0, 0, 1), "same");
   auto secure = std::make_unique<AccessPoint>(
@@ -101,12 +96,9 @@ TEST(Esp32BackendTest, SecuritySelectionAndSwitch) {
   Credentials secret;
   secret.size = 8;
   memcpy(secret.bytes, "password", 8);
-  Controller::RequestResult secure_request = controller.connect(config, secret);
-  ASSERT_NE(secure_request.id, 0u);
+  Status secure_request = controller.connect(config, secret);
+  ASSERT_EQ(secure_request, Status::kOk);
   RunBackend(scheduler);
-  ASSERT_FALSE(observer.results.empty());
-  EXPECT_EQ(observer.results.back().id, secure_request.id);
-  EXPECT_EQ(observer.results.back().status, Status::kOk);
   EXPECT_EQ(controller.linkState().phase, LinkPhase::kAddressReady);
   EXPECT_EQ(controller.linkState().bssid.bytes[5], 2);
   EXPECT_EQ(controller.linkState().address.bytes[2], 7);
@@ -114,8 +106,8 @@ TEST(Esp32BackendTest, SecuritySelectionAndSwitch) {
   config.security = AuthMode::kOpen;
   config.ip_mode = IpMode::kDhcp;
   config.mac_policy = MacPolicy::kDevice;
-  Controller::RequestResult open_request = controller.connect(config, {});
-  ASSERT_NE(open_request.id, 0u);
+  Status open_request = controller.connect(config, {});
+  ASSERT_EQ(open_request, Status::kOk);
   RunBackend(scheduler);
   // The emulator supplies a DHCP lease; switching must replace the static
   // address and complete through the real native IP event.
@@ -130,10 +122,45 @@ TEST(Esp32BackendTest, SecuritySelectionAndSwitch) {
   EXPECT_EQ(controller.linkState().address.bytes[2], 1);
   EXPECT_EQ(memcmp(controller.linkState().station_mac.bytes, original_mac, 6),
             0);
-  EXPECT_EQ(observer.results.back().id, open_request.id);
-  EXPECT_EQ(observer.results.back().status, Status::kOk);
   EXPECT_EQ(controller.linkState().bssid.bytes[5], 1);
   controller.removeListener(observer);
+}
+
+// Verifies stopping discovery or connection selection leaves the controller
+// usable, including after the cancellation deadline has elapsed.
+TEST(Esp32BackendTest, CancelScansWithoutFaulting) {
+  using namespace roo_testing_transducers::wifi;
+  auto environment = std::make_shared<Environment>();
+  environment->setScanDurationMs(500);
+  FakeEsp32().setWifiEnvironment(environment);
+  roo_scheduler::Scheduler scheduler;
+  Esp32IdfInterface radio;
+  MemoryStore store;
+  store.enabled = true;
+  Controller::Options options;
+  options.transition_timeout_ms = 100;
+  Controller controller(radio, store, scheduler, options);
+  ASSERT_EQ(controller.begin(), Status::kOk);
+  scheduler.delay(roo_time::Millis(50));
+  ASSERT_EQ(controller.startScan(), Status::kOk);
+  scheduler.delay(roo_time::Millis(20));
+  ASSERT_EQ(controller.state().scan, Controller::ScanPhase::kRunning);
+  ASSERT_EQ(controller.setEnabled(false), Status::kOk);
+  scheduler.delay(roo_time::Millis(200));
+  EXPECT_EQ(controller.state().station, Controller::StationPhase::kDisabled);
+  ASSERT_EQ(controller.setEnabled(true), Status::kOk);
+  scheduler.delay(roo_time::Millis(50));
+  ASSERT_EQ(controller.connect(TestConfig("cancel-selection"), {}),
+            Status::kOk);
+  scheduler.delay(roo_time::Millis(20));
+  ASSERT_EQ(controller.state().station, Controller::StationPhase::kConnecting);
+  ASSERT_EQ(controller.disconnect(), Status::kOk);
+  scheduler.delay(roo_time::Millis(200));
+  EXPECT_EQ(controller.state().station, Controller::StationPhase::kIdle);
+  EXPECT_EQ(controller.startScan(), Status::kOk);
+  scheduler.delay(roo_time::Millis(600));
+  EXPECT_EQ(controller.state().scan, Controller::ScanPhase::kIdle);
+  EXPECT_EQ(controller.state().scan_status, Status::kOk);
 }
 
 // Verifies a second owner cannot attach to the process-global station.

@@ -18,8 +18,9 @@ The ESP32 adapter uses ESP-IDF directly and works in both Arduino-ESP32
 sketches and native ESP-IDF applications. Construct the controller once, call
 `begin()` from the application startup path, and run the scheduler regularly.
 
-Here is a basic Arduino discovery-and-connect flow. Controller operations are
-asynchronous, so each step starts after the preceding operation completes:
+Station requests replace the desired state and return admission status. Native
+work and coalesced state notifications run asynchronously on the scheduler.
+Profile saves and deletes return their storage outcome synchronously.
 
 ```cpp
 #include <Arduino.h>
@@ -31,49 +32,52 @@ roo_wifi::WiFi wifi(scheduler);
 
 class WifiListener : public roo_wifi::Listener {
  public:
-  void onOperationFinished(
-      const roo_wifi::OperationResult& result) override {
-    if (result.status != roo_wifi::Status::kOk) {
-      Serial.println("Wi-Fi operation failed");
-      return;
+  void onStationStateChanged() override {
+    const roo_wifi::Controller::State state = wifi.state();
+    if (state.status != roo_wifi::Status::kOk) {
+      Serial.println("Wi-Fi transition failed");
     }
-    if (result.kind == roo_wifi::OperationKind::kEnable) {
-      // begin() restores the persisted radio state. Enable it if necessary,
-      // then discover nearby access points.
-      if (wifi.isEnabled()) {
-        wifi.scan();
-      } else {
-        wifi.setEnabled(true);
-      }
-    } else if (result.kind == roo_wifi::OperationKind::kScan) {
-      auto networks = wifi.scanSnapshot();
-      for (size_t i = 0; i < networks.count; ++i) {
-        const auto& network = networks.records[i];
-        if (network.security != roo_wifi::AuthMode::kOpen) continue;
-        roo_wifi::ConnectionConfig config;
-        config.ssid = network.ssid;
-        config.security = network.security;
-        wifi.connect(config, {});  // Connect to the first open network.
-        return;
-      }
-    } else if (result.kind == roo_wifi::OperationKind::kConnect) {
-      Serial.println("Connected");
+    if (state.station == roo_wifi::Controller::StationPhase::kIdle &&
+        !scan_requested_) {
+      scan_requested_ = wifi.startScan() == roo_wifi::Status::kOk;
     }
   }
+
+  void onScanStateChanged() override {
+    const roo_wifi::ScanSnapshot networks = wifi.scanSnapshot();
+    if (networks.generation == generation_) return;
+    generation_ = networks.generation;
+    for (size_t i = 0; i < networks.count; ++i) {
+      const roo_wifi::ScanRecord& network = networks.records[i];
+      if (network.security != roo_wifi::AuthMode::kOpen) continue;
+      roo_wifi::ConnectionConfig config;
+      config.ssid = network.ssid;
+      config.security = network.security;
+      wifi.connect(config, {});
+      break;
+    }
+  }
+
+ private:
+  bool scan_requested_ = false;
+  uint64_t generation_ = 0;
 } listener;
 
 void setup() {
   Serial.begin(115200);
   wifi.addListener(listener);
-  if (wifi.begin() != roo_wifi::Status::kOk) {
-    Serial.println("Could not initialize Wi-Fi");
-  }
+  if (wifi.begin() == roo_wifi::Status::kOk) wifi.setEnabled(true);
 }
 
-void loop() {
-  scheduler.executeEligibleTasks();
-}
+void loop() { scheduler.executeEligibleTasks(); }
 ```
+
+`disconnect()` can interrupt a connection, including its wait for an IP address.
+`connect()` can replace a pending connection or be submitted during teardown;
+only the latest accepted intent starts after teardown finishes. `cancelScan()`
+is scan-specific and idempotent. There is no public generic operation slot or
+cancellation ID. See [API migration](docs/backend_migration.md) for threading,
+state observation, persistence, and timeout details.
 
 For a protected network, populate `roo_wifi::Credentials` and pass it instead
 of `{}`. For a connection that should be remembered, save a profile with
@@ -107,7 +111,9 @@ does not add a `roo_io` dependency to `roo_wifi`; applications opt into the
 `roo_prefs` filesystem-store target and their chosen `roo_io` filesystem.
 
 Register a `roo_wifi::Listener` before `begin()` to observe deferred
-enablement, scan, connection, and profile-operation results. The runnable scan
+category-specific invalidations: `onStationStateChanged()`,
+`onScanStateChanged()`, and `onProfilesChanged()`. Read the latest state, scan
+results, or profiles explicitly. The runnable scan
 examples show how to enable the station and request a scan once the preceding
 enable operation has completed.
 

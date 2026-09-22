@@ -6,22 +6,16 @@
 
 namespace roo_wifi {
 
-/// Nonzero operation identity, never reused during one controller lifetime.
+/// Identifies a native radio operation and its completion.
+/// Values are nonzero and never reused during one controller lifetime.
 using OperationId = uint64_t;
 
-/// Identifies the controller action associated with an operation result.
-enum class OperationKind : uint8_t {
-  kEnable,
-  kScan,
-  kConnect,
-  kDisconnect,
-  kSave,
-  kRemove
-};
+/// Identifies the native adapter action associated with an operation result.
+enum class OperationKind : uint8_t { kEnable, kScan, kConnect, kDisconnect };
 
-/// Reports the terminal result of one admitted controller operation.
+/// Reports the terminal result of one admitted native adapter transition.
 struct OperationResult {
-  /// ID allocated when the controller admitted this operation.
+  /// ID allocated when the controller started this native transition.
   OperationId id = 0;
 
   /// Action that completed.
@@ -29,9 +23,6 @@ struct OperationResult {
 
   /// Successful completion or one terminal failure/cancellation.
   Status status = Status::kOk;
-
-  /// Created, saved, removed, or connected profile key when applicable.
-  ProfileId profile_id = 0;
 
   /// Platform diagnostic code when @p has_native_code is true.
   int32_t native_code = 0;

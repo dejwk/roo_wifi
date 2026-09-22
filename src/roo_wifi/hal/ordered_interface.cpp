@@ -1,8 +1,73 @@
 #include "roo_wifi/hal/ordered_interface.h"
 
 #include <cstring>
+#include <new>
+#include <type_traits>
 
 namespace roo_wifi {
+OrderedInterface::QueuedEvent::QueuedEvent(const NativeStation::Event &event)
+    : native_code(event.native_code), kind(event.kind), status(event.status) {
+  static_assert(std::is_trivially_copyable<QueuedEvent>::value,
+                "Queue assignment must preserve the active union member");
+  using E = NativeStation::Event;
+  if (kind == E::kAssociated || kind == E::kAddressReady ||
+      kind == E::kDisconnected) {
+    ssid = event.link.ssid;
+  }
+  if (kind == E::kAssociated || kind == E::kAddressReady) {
+    bssid = event.link.bssid;
+  }
+  if (kind == E::kAssociated) {
+    // Explicitly begin the association member's lifetime before filling it.
+    new (&payload.association) Association{};
+    payload.association.station_mac = event.link.station_mac;
+    payload.association.security = event.link.security;
+    payload.association.rssi_dbm = event.link.rssi_dbm;
+    payload.association.channel = event.link.channel;
+    payload.association.has_radio_info = event.link.has_radio_info;
+    payload.association.has_station_mac = event.link.has_station_mac;
+  } else if (kind == E::kAddressReady) {
+    payload.addresses.address = event.link.address;
+    payload.addresses.gateway = event.link.gateway;
+    payload.addresses.dns1 = event.link.dns1;
+    payload.addresses.dns2 = event.link.dns2;
+    payload.addresses.has_ipv4 = event.link.has_ipv4;
+    payload.addresses.has_dns1 = event.link.has_dns1;
+    payload.addresses.has_dns2 = event.link.has_dns2;
+  }
+}
+
+NativeStation::Event OrderedInterface::QueuedEvent::expand() const {
+  NativeStation::Event event{kind};
+  event.status = status;
+  event.native_code = native_code;
+  using E = NativeStation::Event;
+  if (kind == E::kAssociated || kind == E::kAddressReady ||
+      kind == E::kDisconnected) {
+    event.link.ssid = ssid;
+  }
+  if (kind == E::kAssociated || kind == E::kAddressReady) {
+    event.link.bssid = bssid;
+  }
+  if (kind == E::kAssociated) {
+    event.link.station_mac = payload.association.station_mac;
+    event.link.security = payload.association.security;
+    event.link.rssi_dbm = payload.association.rssi_dbm;
+    event.link.channel = payload.association.channel;
+    event.link.has_radio_info = payload.association.has_radio_info;
+    event.link.has_station_mac = payload.association.has_station_mac;
+  } else if (kind == E::kAddressReady) {
+    event.link.address = payload.addresses.address;
+    event.link.gateway = payload.addresses.gateway;
+    event.link.dns1 = payload.addresses.dns1;
+    event.link.dns2 = payload.addresses.dns2;
+    event.link.has_ipv4 = payload.addresses.has_ipv4;
+    event.link.has_dns1 = payload.addresses.has_dns1;
+    event.link.has_dns2 = payload.addresses.has_dns2;
+  }
+  return event;
+}
+
 OrderedInterface::OrderedInterface(NativeStation &native) : native_(native) {}
 
 OrderedInterface::~OrderedInterface() { shutdown(); }
@@ -45,7 +110,7 @@ Status OrderedInterface::setEnabled(OperationId id, bool enabled) {
   return status;
 }
 
-Status OrderedInterface::scan(OperationId id, uint16_t capacity) {
+Status OrderedInterface::startScan(OperationId id, uint16_t capacity) {
   Status status = stationAdmission(id);
   if (status != Status::kOk) return status;
   if (!enabled_) return Status::kDisabled;
@@ -108,21 +173,18 @@ Status OrderedInterface::disconnect(OperationId id) {
   return status;
 }
 
-Status OrderedInterface::cancel(OperationId id) {
-  if (id == 0) return Status::kNotFound;
-  if (scan_.id == id) {
-    if (scan_cancelling_) return Status::kOk;
-    Status status = native_.stopScan();
-    if (status != Status::kOk) return status;
-    scan_cancelling_ = true;
-    return Status::kOk;
-  }
-  if (station_.id != id) return Status::kNotFound;
+Status OrderedInterface::cancelScan() {
+  if (scan_.id == 0 || scan_cancelling_) return Status::kOk;
+  Status status = native_.stopScan();
+  if (status != Status::kOk) return status;
+  scan_cancelling_ = true;
+  return Status::kOk;
+}
+
+Status OrderedInterface::cancelConnect() {
+  if (station_.id == 0 || station_.kind != OperationKind::kConnect)
+    return Status::kNotFound;
   if (cancelling_) return Status::kOk;
-  if (station_.kind == OperationKind::kEnable) {
-    cancelling_ = true;
-    return Status::kOk;
-  }
   if (!waiting_disconnect_ && link_.phase != LinkPhase::kIdle) {
     Status status = native_.disconnect();
     if (status == Status::kNotFound)
@@ -161,7 +223,7 @@ void OrderedInterface::post(const NativeStation::Event &event) {
   if (count_ == queue_.size()) {
     overflow_ = true;
   } else {
-    queue_[(head_ + count_) % queue_.size()] = event;
+    queue_[(head_ + count_) % queue_.size()] = QueuedEvent(event);
     ++count_;
   }
   dispatch_->scheduleNow();
@@ -178,7 +240,7 @@ void OrderedInterface::drain() {
       if (overflow) count_ = 0;
       if (!overflow && count_ == 0) break;
       if (!overflow) {
-        event = queue_[head_];
+        event = queue_[head_].expand();
         head_ = (head_ + 1) % queue_.size();
         --count_;
       }

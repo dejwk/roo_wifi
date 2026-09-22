@@ -31,23 +31,27 @@ class WiFiSpecialization
     : private internal::WiFiSpecializationResources<Store, PlatformInterface>,
       public Controller {
  public:
-  /// Creates the platform dependencies and their controller facade.
+  /// Creates a Wi-Fi controller using @p scheduler and @p options.
+  /// Owns the platform radio and storage adapters; borrows the scheduler.
   /// @param scheduler Context on which controller calls and callbacks run.
-  /// @param options Capacity, timeout, and startup behavior.
-  explicit WiFiSpecialization(roo_scheduler::Scheduler &scheduler,
+  /// @param options Scan capacity and native transition timeout settings.
+  explicit WiFiSpecialization(roo_scheduler::Scheduler& scheduler,
                               Controller::Options options = {})
       : Resources(),
         Controller(this->platform_interface_, this->platform_store_, scheduler,
                    options) {}
 
-  /// Creates the platform storage adapter from a caller-owned backend.
+  /// Creates a Wi-Fi controller using @p scheduler, @p initializer, and
+  /// @p options. Constructs its storage adapter from the supplied backend.
+  /// The backend and borrowed scheduler must outlive this controller.
+  /// @param scheduler Context on which controller calls and callbacks run.
   /// @param initializer Backend used to construct the platform storage adapter.
-  /// The backend must outlive this controller.
+  /// @param options Scan capacity and native transition timeout settings.
   template <typename StoreInitializer,
             typename std::enable_if<
                 std::is_constructible<Store, StoreInitializer&&>::value,
                 int>::type = 0>
-  WiFiSpecialization(roo_scheduler::Scheduler &scheduler,
+  WiFiSpecialization(roo_scheduler::Scheduler& scheduler,
                      StoreInitializer&& initializer,
                      Controller::Options options = {})
       : Resources(std::forward<StoreInitializer>(initializer)),

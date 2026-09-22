@@ -11,7 +11,7 @@ class Esp32Station : public NativeStation {
   /// Creates an unattached ESP32 station driver.
   Esp32Station() = default;
 
-  /// Detaches the driver from ESP event delivery.
+  /// Destroys the station driver after detaching it from ESP event delivery.
   ~Esp32Station() override;
 
   /// Registers ESP event handlers for the supplied receiver.
@@ -86,6 +86,7 @@ class Esp32IdfInterface : private Esp32Station, public OrderedInterface {
   /// Creates the station driver and its ordered interface.
   Esp32IdfInterface() : OrderedInterface(static_cast<Esp32Station &>(*this)) {}
 
+  /// Destroys the ESP-IDF radio adapter.
   /// Shuts down ordered dispatch before destroying the station driver.
   ~Esp32IdfInterface() override { OrderedInterface::shutdown(); }
 };

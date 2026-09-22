@@ -72,6 +72,14 @@ policy on top of this baseline.
   declarations.
 - Doxygen comments should summarize implemented behavior, or intended behavior
   for pure-virtual and otherwise contract-defining declarations.
+- Start each Doxygen comment with the method, field, or type's purpose. Put
+  ownership, lifetime, threading, allocation, and other auxiliary properties
+  afterward. Constructor summaries should say what they create and how they
+  use the supplied parameters, referencing those parameters with `@p`.
+- Make public API comments useful to a human caller: explain meaningful
+  parameters, outcomes, asynchronous completion, ownership/lifetime, and
+  relevant failure behavior. Do not trade clarity for a terse summary; keep
+  detail proportional to the complexity of the contract.
 - Every code change must ship with focused unit tests.
 - Non-trivial test cases should carry brief `Verifies ...` comments stating the
   contract or regression being checked. The comment should apply to the whole

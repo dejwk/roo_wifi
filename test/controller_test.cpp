@@ -17,7 +17,7 @@ class BackendTest : public testing::Test {
     controller.addListener(observer);
     ASSERT_EQ(controller.begin(), Status::kOk);
     Pump(scheduler);
-    observer.results.clear();
+    observer.notifications = 0;
   }
 
   void TearDown() override { controller.removeListener(observer); }
@@ -27,34 +27,33 @@ class BackendTest : public testing::Test {
 // readiness.
 TEST_F(BackendTest, OwnedInputAndAddressReadiness) {
   ConnectionConfig c = TestConfig();
-  Controller::RequestResult r = controller.connect(c, {});
-  ASSERT_NE(r.id, 0u);
+  ASSERT_EQ(controller.connect(c, {}), Status::kOk);
   c.ssid.bytes[0] = 'X';
-  EXPECT_TRUE(observer.results.empty());
+  EXPECT_EQ(observer.notifications, 0);
   Pump(scheduler);
   EXPECT_EQ(native.last_config.ssid.bytes[0], 'n');
   native.associated();
   Pump(scheduler);
-  EXPECT_TRUE(observer.results.empty());
+  EXPECT_EQ(controller.state().station, Controller::StationPhase::kAwaitingIp);
   native.ready();
   Pump(scheduler);
-  ASSERT_EQ(observer.results.size(), 1u);
-  EXPECT_EQ(observer.results[0].id, r.id);
-  EXPECT_EQ(observer.results[0].status, Status::kOk);
+  EXPECT_EQ(controller.state().station, Controller::StationPhase::kConnected);
+  auto identity = controller.linkState().connection_id;
   native.disconnected();
   Pump(scheduler);
-  EXPECT_EQ(observer.results.size(), 1u);
-  EXPECT_EQ(controller.linkState().connection_id, r.id);
+  EXPECT_EQ(controller.linkState().connection_id, identity);
+  EXPECT_EQ(controller.linkState().phase, LinkPhase::kIdle);
 }
 
 // Verifies switching processes A's queued disconnect before starting B.
 TEST_F(BackendTest, OrderedSwitchWithDelayedDispatch) {
-  Controller::RequestResult a = controller.connect(TestConfig("A"), {});
+  controller.connect(TestConfig("A"), {});
   Pump(scheduler);
   native.associated();
   native.ready();
   Pump(scheduler);
-  Controller::RequestResult b = controller.connect(TestConfig("B"), {});
+  auto a = controller.linkState().connection_id;
+  EXPECT_EQ(controller.connect(TestConfig("B"), {}), Status::kOk);
   Pump(scheduler);
   EXPECT_EQ(native.connects, 1);
   EXPECT_EQ(native.disconnects, 1);
@@ -62,108 +61,229 @@ TEST_F(BackendTest, OrderedSwitchWithDelayedDispatch) {
   native.disconnected();
   Pump(scheduler);
   EXPECT_EQ(native.connects, 2);
-  EXPECT_EQ(controller.linkState().connection_id, b.id);
+  EXPECT_NE(controller.linkState().connection_id, a);
   EXPECT_EQ(controller.linkState().phase, LinkPhase::kConnecting);
   native.associated();
   native.ready();
   Pump(scheduler);
-  ASSERT_EQ(observer.results.size(), 2u);
-  EXPECT_EQ(observer.results[0].id, a.id);
-  EXPECT_EQ(observer.results[1].id, b.id);
+  EXPECT_EQ(controller.state().station, Controller::StationPhase::kConnected);
 }
 
-// Verifies cancellation waits for the native lifecycle before allowing a retry.
+// Verifies a replacement connection waits for native teardown before starting.
 TEST_F(BackendTest, CancelBeforeAssociationAndSameSsidRetry) {
-  Controller::RequestResult a = controller.connect(TestConfig(), {});
+  controller.connect(TestConfig(), {});
   Pump(scheduler);
-  EXPECT_EQ(controller.cancel(a.id), Status::kOk);
-  EXPECT_EQ(controller.connect(TestConfig(), {}).status, Status::kBusy);
+  auto a = controller.linkState().connection_id;
+  EXPECT_EQ(controller.disconnect(), Status::kOk);
   Pump(scheduler);
-  EXPECT_TRUE(observer.results.empty());
+  EXPECT_EQ(controller.connect(TestConfig(), {}), Status::kOk);
+  Pump(scheduler);
+  EXPECT_EQ(native.connects, 1);
   native.disconnected();
   Pump(scheduler);
-  ASSERT_EQ(observer.results.size(), 1u);
-  EXPECT_EQ(observer.results[0].status, Status::kCancelled);
-  Controller::RequestResult b = controller.connect(TestConfig(), {});
-  EXPECT_NE(b.id, a.id);
-  Pump(scheduler);
+  EXPECT_NE(controller.linkState().connection_id, a);
   native.associated();
   native.ready();
   Pump(scheduler);
-  ASSERT_EQ(observer.results.size(), 2u);
-  EXPECT_EQ(observer.results.back().id, b.id);
-  EXPECT_EQ(controller.cancel(a.id), Status::kNotFound);
+  EXPECT_EQ(controller.state().station, Controller::StationPhase::kConnected);
 }
 
-// Verifies profile work is independent of radio work and cancellation is
-// deferred.
-TEST_F(BackendTest, IndependentSlotsAndCancelledSave) {
-  Controller::RequestResult scan = controller.scan();
+// Disconnect can stop an attempt without the caller retaining its ID.
+TEST_F(BackendTest, DisconnectCancelsBeforeNativeStart) {
+  ASSERT_EQ(controller.connect(TestConfig(), {}), Status::kOk);
+  ASSERT_EQ(controller.disconnect(), Status::kOk);
+  EXPECT_EQ(observer.notifications, 0);
+  EXPECT_EQ(controller.disconnect(), Status::kOk);
+  Pump(scheduler);
+  EXPECT_EQ(native.connects, 0);
+  EXPECT_EQ(native.disconnects, 0);
+  EXPECT_EQ(controller.state().station, Controller::StationPhase::kIdle);
+}
+
+TEST_F(BackendTest, DisconnectAfterQueuedCancellation) {
+  controller.connect(TestConfig(), {});
+  EXPECT_EQ(controller.disconnect(), Status::kOk);
+  EXPECT_EQ(controller.disconnect(), Status::kOk);
+  Pump(scheduler);
+  EXPECT_EQ(native.connects, 0);
+  EXPECT_EQ(controller.state().station, Controller::StationPhase::kIdle);
+}
+
+TEST_F(BackendTest, DisconnectRejectionFaultsController) {
+  controller.connect(TestConfig(), {});
+  Pump(scheduler);
+  native.disconnect_rejection = Status::kConnectionFailed;
+  EXPECT_EQ(controller.disconnect(), Status::kOk);
+  Pump(scheduler);
+  EXPECT_EQ(controller.state().status, Status::kConnectionFailed);
+  EXPECT_EQ(controller.state().station, Controller::StationPhase::kFaulted);
+  native.associated();
+  native.ready();
+  Pump(scheduler);
+  EXPECT_EQ(controller.state().station, Controller::StationPhase::kFaulted);
+  EXPECT_EQ(controller.connect(TestConfig(), {}), Status::kNotStarted);
+}
+
+TEST_F(BackendTest, DisconnectCancelsBeforeAssociation) {
+  controller.connect(TestConfig(), {});
+  Pump(scheduler);
+  EXPECT_EQ(controller.disconnect(), Status::kOk);
+  Pump(scheduler);
+  EXPECT_EQ(native.disconnects, 1);
+  EXPECT_EQ(controller.disconnect(), Status::kOk);
+  Pump(scheduler);
+  EXPECT_EQ(native.disconnects, 1);
+  EXPECT_EQ(controller.state().station,
+            Controller::StationPhase::kDisconnecting);
+  native.disconnected();
+  Pump(scheduler);
+  EXPECT_EQ(controller.state().station, Controller::StationPhase::kIdle);
+  EXPECT_EQ(controller.connect(TestConfig(), {}), Status::kOk);
+}
+
+TEST_F(BackendTest, DisconnectWhileWaitingForIpIgnoresQueuedReadiness) {
+  ProfileSettings settings;
+  settings.connection = TestConfig();
+  settings.auto_connect = true;
+  CredentialUpdate update;
+  update.intent = CredentialIntent::kClear;
+  ASSERT_EQ(controller.saveProfile(42, settings, update), Status::kOk);
+  ASSERT_EQ(controller.connect(42), Status::kOk);
+  Pump(scheduler);
+  native.associated();
+  Pump(scheduler);
+  native.ready();
+  ASSERT_EQ(controller.disconnect(), Status::kOk);
+  Pump(scheduler);
+  native.disconnected();
+  Pump(scheduler);
+  EXPECT_EQ(controller.state().station, Controller::StationPhase::kIdle);
+  ProfileId last = 0;
+  EXPECT_EQ(store.readLastProfile(last), Status::kNotFound);
+  scheduler.delay(roo_time::Seconds(6));
+  Pump(scheduler);
+  EXPECT_EQ(native.connects, 1);
+}
+
+TEST_F(BackendTest, FollowUpIntentDuringDisconnectNotification) {
+  class FollowUp : public Controller::Listener {
+   public:
+    Controller* controller;
+    bool requested = false;
+    void onStationStateChanged() override {
+      if (!requested && controller->state().station ==
+                            Controller::StationPhase::kDisconnecting) {
+        requested = true;
+        EXPECT_EQ(controller->connect(TestConfig("B"), {}), Status::kOk);
+      }
+    }
+  } listener;
+  listener.controller = &controller;
+  controller.connect(TestConfig(), {});
+  Pump(scheduler);
+  controller.addListener(listener);
+  controller.disconnect();
+  Pump(scheduler);
+  EXPECT_TRUE(listener.requested);
+  EXPECT_EQ(native.connects, 1);
+  native.disconnected();
+  Pump(scheduler);
+  EXPECT_EQ(native.connects, 2);
+  EXPECT_EQ(native.last_config.ssid.bytes[0], 'B');
+  controller.removeListener(listener);
+}
+
+TEST_F(BackendTest, SupersedingPendingConnectionDoesNotReviveIt) {
+  controller.connect(TestConfig("A"), {});
+  Pump(scheduler);
+  controller.disconnect();
+  Pump(scheduler);
+  controller.connect(TestConfig("B"), {});
+  controller.disconnect();
+  Pump(scheduler);
+  native.disconnected();
+  Pump(scheduler);
+  EXPECT_EQ(native.connects, 1);
+  EXPECT_EQ(native.disconnects, 1);
+  EXPECT_EQ(controller.state().station, Controller::StationPhase::kIdle);
+}
+
+TEST_F(BackendTest, ShutdownStopsConnectionAndNotifications) {
+  controller.connect(TestConfig(), {});
+  Pump(scheduler);
+  controller.disconnect();
+  Pump(scheduler);
+  auto count = observer.notifications;
+  controller.shutdown();
+  native.disconnected();
+  Pump(scheduler);
+  EXPECT_EQ(observer.notifications, count);
+  EXPECT_EQ(controller.disconnect(), Status::kNotStarted);
+}
+
+// Verifies profile writes settle synchronously during an asynchronous scan.
+TEST_F(BackendTest, SynchronousSaveDuringScan) {
+  ASSERT_EQ(controller.startScan(), Status::kOk);
   ProfileSettings p;
   p.connection = TestConfig();
   CredentialUpdate u;
   u.intent = CredentialIntent::kClear;
-  Controller::RequestResult save = controller.saveProfile(42, p, u);
-  ASSERT_NE(save.id, 0u);
-  ASSERT_NE(scan.id, 0u);
-  EXPECT_EQ(controller.cancel(save.id), Status::kOk);
-  EXPECT_TRUE(observer.results.empty());
-  Pump(scheduler);
+  ASSERT_EQ(controller.saveProfile(42, p, u), Status::kOk);
+  EXPECT_EQ(observer.notifications, 0);
   Profile out;
-  EXPECT_EQ(store.loadProfile(42, out), Status::kNotFound);
-  ASSERT_EQ(observer.results.size(), 1u);
-  EXPECT_EQ(observer.results[0].status, Status::kCancelled);
+  EXPECT_EQ(store.loadProfile(42, out), Status::kOk);
+  Pump(scheduler);
+  EXPECT_TRUE(controller.isScanning());
+  EXPECT_EQ(controller.state().profiles_generation, 1u);
 }
 
-// Verifies failed scans retain the old snapshot and repeated scans get new IDs.
+// Verifies failed scans retain the old snapshot and metadata.
 TEST_F(BackendTest, SnapshotLifetimeAndMetadata) {
   ScanRecord record;
   record.ssid = TestConfig().ssid;
   record.security = AuthMode::kEnterprise;
   record.bssid.bytes[5] = 42;
   native.aps.push_back(record);
-  Controller::RequestResult a = controller.scan();
+  Status a = controller.startScan();
   Pump(scheduler);
   native.emit({NativeStation::Event::kScanDone});
   Pump(scheduler);
   Controller::ScanSnapshot snapshot = controller.scanSnapshot();
   ASSERT_EQ(snapshot.count, 1u);
   EXPECT_EQ(snapshot.records[0].security, AuthMode::kEnterprise);
-  Controller::RequestResult b = controller.scan();
+  Status b = controller.startScan();
   Pump(scheduler);
   NativeStation::Event event{};
   event.kind = NativeStation::Event::kScanDone;
   event.status = Status::kConnectionFailed;
   native.emit(event);
   Pump(scheduler);
-  EXPECT_NE(a.id, b.id);
+  EXPECT_EQ(a, Status::kOk);
+  EXPECT_EQ(b, Status::kOk);
   EXPECT_EQ(controller.scanSnapshot().generation, snapshot.generation);
   EXPECT_EQ(snapshot.records[0].bssid.bytes[5], 42);
 }
 
-// Verifies explicit shutdown settles public work and queued native delivery is
-// inert.
+// Verifies shutdown cancels pending notifications and ignores queued native
+// events.
 TEST_F(BackendTest, ShutdownNeutralizesQueuedEvents) {
-  Controller::RequestResult r = controller.connect(TestConfig(), {});
+  controller.connect(TestConfig(), {});
   Pump(scheduler);
   native.associated();
+  auto count = observer.notifications;
   controller.shutdown();
   Pump(scheduler);
-  ASSERT_EQ(observer.results.size(), 1u);
-  EXPECT_EQ(observer.results[0].id, r.id);
-  EXPECT_EQ(observer.results[0].status, Status::kCancelled);
-  EXPECT_EQ(controller.scan().status, Status::kNotStarted);
+  EXPECT_EQ(observer.notifications, count);
+  EXPECT_EQ(controller.startScan(), Status::kNotStarted);
 }
 
 // Verifies actual physical state remains observable after persistence failure.
 TEST_F(BackendTest, EnablePersistenceFailure) {
   store.enabled_error = Status::kStorageFailure;
-  Controller::RequestResult r = controller.setEnabled(false);
+  EXPECT_EQ(controller.setEnabled(false), Status::kOk);
   Pump(scheduler);
   EXPECT_FALSE(controller.isEnabled());
-  ASSERT_EQ(observer.results.size(), 1u);
-  EXPECT_EQ(observer.results[0].id, r.id);
-  EXPECT_EQ(observer.results[0].status, Status::kStorageFailure);
+  EXPECT_EQ(controller.state().status, Status::kStorageFailure);
 }
 
 // Verifies direct temporary connections leave persistence untouched.
@@ -228,10 +348,10 @@ TEST(StoreTest, ProfileAndSecretBlobsRoundTripAllFields) {
   EXPECT_TRUE(profile.has_credentials);
   EXPECT_EQ(profile.settings.connection.ssid.size,
             settings.connection.ssid.size);
-  EXPECT_EQ(memcmp(profile.settings.connection.ssid.bytes,
-                   settings.connection.ssid.bytes,
-                   settings.connection.ssid.size),
-            0);
+  EXPECT_EQ(
+      memcmp(profile.settings.connection.ssid.bytes,
+             settings.connection.ssid.bytes, settings.connection.ssid.size),
+      0);
   EXPECT_EQ(profile.settings.connection.security, AuthMode::kWpa2Personal);
   EXPECT_TRUE(profile.settings.connection.hidden);
   EXPECT_EQ(profile.settings.connection.ip_mode, IpMode::kStaticIpv4);
@@ -426,7 +546,7 @@ TEST(ProfileEnumerationTest, ReloadsFromProfilesChanged) {
   settings.connection = TestConfig("notified");
   CredentialUpdate update;
   update.intent = CredentialIntent::kClear;
-  ASSERT_NE(controller.saveProfile(23, settings, update).id, 0u);
+  ASSERT_EQ(controller.saveProfile(23, settings, update), Status::kOk);
   Pump(scheduler);
   EXPECT_EQ(listener.notifications, 1);
   EXPECT_EQ(listener.status, Status::kOk);
@@ -492,25 +612,60 @@ TEST(TimeoutTest, UnsettledNativeWorkCannotOverlapNewAttempt) {
   controller.addListener(observer);
   controller.begin();
   Pump(scheduler);
-  observer.results.clear();
-  Controller::RequestResult request = controller.connect(TestConfig(), {});
+  observer.notifications = 0;
+  ASSERT_EQ(controller.connect(TestConfig(), {}), Status::kOk);
   Pump(scheduler);
   scheduler.delay(roo_time::Millis(6));
   Pump(scheduler);
-  ASSERT_EQ(observer.results.size(), 1u);
-  EXPECT_EQ(observer.results[0].id, request.id);
-  EXPECT_EQ(observer.results[0].status, Status::kTimeout);
+  EXPECT_EQ(controller.state().station, Controller::StationPhase::kFaulted);
+
+  EXPECT_EQ(controller.state().status, Status::kTimeout);
   native.disconnected();
   Pump(scheduler);
-  EXPECT_EQ(observer.results.size(), 1u);
-  EXPECT_EQ(controller.connect(TestConfig(), {}).status, Status::kNotStarted);
+  EXPECT_EQ(controller.state().station, Controller::StationPhase::kFaulted);
+  EXPECT_EQ(controller.connect(TestConfig(), {}), Status::kNotStarted);
   ProfileSettings settings;
   settings.connection = TestConfig();
   CredentialUpdate update;
   update.intent = CredentialIntent::kClear;
-  EXPECT_NE(controller.saveProfile(1, settings, update).id, 0u);
+  EXPECT_EQ(controller.saveProfile(1, settings, update), Status::kOk);
   Pump(scheduler);
-  EXPECT_EQ(observer.results.back().status, Status::kOk);
+  Profile out;
+  EXPECT_EQ(controller.loadProfile(1, out), Status::kOk);
+  controller.removeListener(observer);
+}
+
+TEST(TimeoutTest, DisconnectCancellationHasTransitionDeadline) {
+  roo_scheduler::Scheduler scheduler;
+  TestStation native;
+  OrderedInterface radio(native);
+  MemoryStore store;
+  store.enabled = true;
+  Controller::Options options;
+  options.connect_timeout_ms = 30000;
+  options.transition_timeout_ms = 1;
+  Controller controller(radio, store, scheduler, options);
+  Observer observer;
+  controller.addListener(observer);
+  ASSERT_EQ(controller.begin(), Status::kOk);
+  Pump(scheduler);
+  observer.notifications = 0;
+  EXPECT_EQ(controller.connect(TestConfig(), {}), Status::kOk);
+  Pump(scheduler);
+  auto disconnect = controller.disconnect();
+  ASSERT_EQ(disconnect, Status::kOk);
+  scheduler.delay(roo_time::Millis(6));
+  Pump(scheduler);
+  EXPECT_EQ(controller.state().station, Controller::StationPhase::kFaulted);
+
+  EXPECT_EQ(controller.state().status, Status::kTimeout);
+
+  EXPECT_EQ(controller.state().status, Status::kTimeout);
+  EXPECT_EQ(native.disconnects, 1);
+  EXPECT_EQ(controller.connect(TestConfig(), {}), Status::kNotStarted);
+  native.disconnected();
+  Pump(scheduler);
+  EXPECT_EQ(controller.state().station, Controller::StationPhase::kFaulted);
   controller.removeListener(observer);
 }
 
@@ -527,7 +682,7 @@ TEST(TimeoutTest, MonitorsAtDeadlineRatherThanPolling) {
   controller.begin();
   Pump(scheduler);
 
-  ASSERT_NE(controller.connect(TestConfig(), {}).id, 0u);
+  ASSERT_EQ(controller.connect(TestConfig(), {}), Status::kOk);
   Pump(scheduler);
 
   EXPECT_GT(scheduler.getNearestExecutionDelay(), roo_time::Millis(500));
@@ -569,7 +724,7 @@ TEST_F(BackendTest, RemembersLastSuccessfulSavedProfile) {
   update.intent = CredentialIntent::kClear;
   ASSERT_EQ(store.saveProfile(31, settings, update), Status::kOk);
 
-  ASSERT_NE(controller.connect(31).id, 0u);
+  ASSERT_EQ(controller.connect(31), Status::kOk);
   Pump(scheduler);
   native.associated();
   native.ready();
@@ -578,7 +733,7 @@ TEST_F(BackendTest, RemembersLastSuccessfulSavedProfile) {
   EXPECT_EQ(store.readLastProfile(last), Status::kOk);
   EXPECT_EQ(last, 31u);
 
-  ASSERT_NE(controller.connect(TestConfig("temporary"), {}).id, 0u);
+  ASSERT_EQ(controller.connect(TestConfig("temporary"), {}), Status::kOk);
   Pump(scheduler);
   native.disconnected();
   Pump(scheduler);
@@ -619,10 +774,10 @@ TEST_F(BackendTest, SavedProfileSurvivesNativeRejection) {
   controller.saveProfile(1, settings, update);
   Pump(scheduler);
   native.rejection = Status::kConnectionFailed;
-  Controller::RequestResult request = controller.connect(1);
+  Status request = controller.connect(1);
   Pump(scheduler);
-  EXPECT_EQ(observer.results.back().id, request.id);
-  EXPECT_EQ(observer.results.back().status, Status::kConnectionFailed);
+  EXPECT_EQ(request, Status::kOk);
+  EXPECT_EQ(controller.state().status, Status::kConnectionFailed);
   Profile out;
   EXPECT_EQ(controller.loadProfile(1, out), Status::kOk);
 }
@@ -635,7 +790,7 @@ TEST_F(BackendTest, RetriesUnavailableSavedProfile) {
   update.intent = CredentialIntent::kClear;
   ASSERT_EQ(store.saveProfile(5, settings, update), Status::kOk);
   native.rejection = Status::kConnectionFailed;
-  ASSERT_NE(controller.connect(5).id, 0u);
+  ASSERT_EQ(controller.connect(5), Status::kOk);
   Pump(scheduler);
   EXPECT_EQ(native.connects, 1);
 
@@ -645,30 +800,26 @@ TEST_F(BackendTest, RetriesUnavailableSavedProfile) {
   EXPECT_EQ(native.connects, 2);
 }
 
-// Verifies cancellation before queued native execution emits one result and no
-// connection.
+// Verifies disconnect supersedes a queued connection before native execution.
 TEST_F(BackendTest, CancelBeforeNativeStart) {
-  Controller::RequestResult request = controller.connect(TestConfig(), {});
-  EXPECT_EQ(controller.cancel(request.id), Status::kOk);
+  ASSERT_EQ(controller.connect(TestConfig(), {}), Status::kOk);
+  EXPECT_EQ(controller.disconnect(), Status::kOk);
   Pump(scheduler);
   EXPECT_EQ(native.connects, 0);
-  ASSERT_EQ(observer.results.size(), 1u);
-  EXPECT_EQ(observer.results[0].status, Status::kCancelled);
+  EXPECT_EQ(controller.state().station, Controller::StationPhase::kIdle);
 }
 
 // Verifies bounded event overflow faults radio admission instead of reusing
 // lost identity.
 TEST_F(BackendTest, NativeHandoffOverflowFailsClosed) {
-  Controller::RequestResult request = controller.scan();
+  ASSERT_EQ(controller.startScan(), Status::kOk);
   Pump(scheduler);
   for (int i = 0; i < 20; ++i) native.emit({NativeStation::Event::kScanDone});
   Pump(scheduler);
-  ASSERT_EQ(observer.results.size(), 1u);
-  EXPECT_EQ(observer.results[0].id, request.id);
-  EXPECT_EQ(observer.results[0].status, Status::kConnectionFailed);
-  controller.scan();
+  EXPECT_EQ(controller.state().scan_status, Status::kConnectionFailed);
+  controller.startScan();
   Pump(scheduler);
-  EXPECT_EQ(observer.results.back().status, Status::kNotStarted);
+  EXPECT_EQ(controller.state().scan_status, Status::kNotStarted);
 }
 }  // namespace roo_wifi
 
@@ -726,7 +877,7 @@ TEST(OwnershipTest, FailedBeginDoesNotShutdownExistingOwner) {
   ASSERT_EQ(first.begin(), Status::kOk);
   Pump(scheduler);
   EXPECT_EQ(second.begin(), Status::kBusy);
-  EXPECT_NE(first.connect(TestConfig(), {}).id, 0u);
+  EXPECT_EQ(first.connect(TestConfig(), {}), Status::kOk);
   Pump(scheduler);
   EXPECT_EQ(native.connects, 1);
 }

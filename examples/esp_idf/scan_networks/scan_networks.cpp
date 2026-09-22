@@ -1,3 +1,4 @@
+// Discover nearby networks using deferred state notifications on one scheduler.
 #include <cstdio>
 
 #ifdef ROO_TESTING
@@ -49,28 +50,26 @@ struct Emulator {
 } emulator;
 #endif
 
+/// Prints each successful scan publication once.
 class ScanListener : public roo_wifi::Listener {
  public:
+  /// Borrows the controller for the example lifetime.
   explicit ScanListener(roo_wifi::WiFi& wifi) : wifi_(wifi) {}
 
-  void onOperationFinished(const roo_wifi::OperationResult& result) override {
-    if (result.kind != roo_wifi::OperationKind::kEnable) {
-      return;
-    }
-    if (wifi_.isEnabled()) {
-      StartScan();
-      return;
-    }
-    if (enable_requested_) {
-      return;
-    }
-    enable_requested_ = true;
-    if (wifi_.setEnabled(true).id == 0) {
-      std::printf("Could not enable the Wi-Fi station\n");
+  /// Reads current state after coalesced notification; callbacks stay on the
+  /// application scheduler, so no application locking is needed.
+  void onStationStateChanged() override {
+    const roo_wifi::Controller::State state = wifi_.state();
+    if (state.station == roo_wifi::Controller::StationPhase::kIdle &&
+        !scan_requested_) {
+      startScan();
     }
   }
 
-  void onScanChanged() override {
+  /// Reads scan results after deferred scan-state notification.
+  void onScanStateChanged() override {
+    if (wifi_.scanSnapshot().generation == published_generation_) return;
+    published_generation_ = wifi_.scanSnapshot().generation;
     const roo_wifi::ScanSnapshot snapshot = wifi_.scanSnapshot();
     std::printf("Found %u%s networks\n", static_cast<unsigned>(snapshot.count),
                 snapshot.truncated ? "+" : "");
@@ -83,19 +82,20 @@ class ScanListener : public roo_wifi::Listener {
   }
 
  private:
-  void StartScan() {
+  // Requests discovery once the physical station has finished enabling.
+  void startScan() {
     if (scan_requested_) {
       return;
     }
-    const roo_wifi::RequestResult request = wifi_.scan();
-    if (request.id == 0) {
+    const roo_wifi::Status status = wifi_.startScan();
+    if (status != roo_wifi::Status::kOk) {
       std::printf("Could not start the network scan\n");
       return;
     }
     scan_requested_ = true;
   }
   roo_wifi::WiFi& wifi_;
-  bool enable_requested_ = false;
+  uint64_t published_generation_ = 0;
   bool scan_requested_ = false;
 };
 
@@ -117,6 +117,8 @@ extern "C" void app_main() {
     std::printf("Could not initialize roo_wifi\n");
     return;
   }
+
+  wifi.setEnabled(true);
 
   for (;;) {
     scheduler.executeEligibleTasks();

@@ -10,9 +10,9 @@ class PrefsStore : public FieldStore {
   /// Creates a profile store backed by roo_prefs' platform-default store.
   PrefsStore();
 
-  /// Creates a profile store backed by a caller-owned roo_prefs store.
+  /// Creates a Wi-Fi profile store using borrowed roo_prefs backend @p store.
   /// @param store Backend that must outlive this adapter.
-  explicit PrefsStore(roo_prefs::Store& store);
+  explicit PrefsStore(roo_prefs::Store &store);
 
   /// Opens the roo_prefs collection for subsequent operations.
   Status begin() override;

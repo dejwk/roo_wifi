@@ -80,7 +80,14 @@ cc_library(
     )
     for name, tests in [
         ("configuration_store_test", "StoreTest.*"),
-        ("configuration_controller_test", "StartupTest.*:TimeoutTest.*:OwnershipTest.*:ConfigurationTest.*:BackendTest.IndependentSlotsAndCancelledSave:BackendTest.EnablePersistenceFailure:BackendTest.TemporaryConnectionDoesNotPersist:BackendTest.SavedProfileSurvivesNativeRejection"),
+        ("configuration_controller_test", "StartupTest.*:TimeoutTest.*:OwnershipTest.*:ConfigurationTest.*:BackendTest.SynchronousSaveDuringScan:BackendTest.EnablePersistenceFailure:BackendTest.TemporaryConnectionDoesNotPersist:BackendTest.SavedProfileSurvivesNativeRejection"),
         ("interface_lifecycle_test", "BackendTest.OwnedInputAndAddressReadiness:BackendTest.OrderedSwitchWithDelayedDispatch:BackendTest.CancelBeforeAssociationAndSameSsidRetry:BackendTest.SnapshotLifetimeAndMetadata:BackendTest.ShutdownNeutralizesQueuedEvents:BackendTest.CancelBeforeNativeStart:BackendTest.NativeHandoffOverflowFailsClosed"),
     ]
 ]
+
+cc_test(
+    name = "state_machine_test",
+    size = "small",
+    srcs = ["state_machine_test.cpp", "backend_fakes.h"],
+    deps = ["//:roo_wifi", "@googletest//:gtest"] + TEST_MAIN_DEPS,
+)

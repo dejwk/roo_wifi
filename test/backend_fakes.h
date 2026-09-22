@@ -132,7 +132,7 @@ class TestStation : public NativeStation {
   /// Records admission of a native disconnect.
   Status disconnect() override {
     ++disconnects;
-    return Status::kOk;
+    return disconnect_rejection;
   }
 
   /// Copies the bounded set of configured scan records.
@@ -184,6 +184,7 @@ class TestStation : public NativeStation {
   ConnectionConfig last_config;
   Credentials last_secret;
   Status rejection = Status::kOk;
+  Status disconnect_rejection = Status::kOk;
   Status read_error = Status::kOk;
   std::vector<ScanRecord> aps;
 };
@@ -191,16 +192,10 @@ class TestStation : public NativeStation {
 /// Collects controller operation and link notifications for assertions.
 class Observer : public Controller::Listener {
  public:
-  /// Retains a delivered terminal operation result.
-  void onOperationFinished(const OperationResult &result) override {
-    results.push_back(result);
-  }
-
-  /// Retains a delivered link-state publication.
-  void onLinkChanged(const LinkState &link) override { links.push_back(link); }
-
-  std::vector<OperationResult> results;
-  std::vector<LinkState> links;
+  void onStationStateChanged() override { ++notifications; }
+  void onScanStateChanged() override { ++notifications; }
+  void onProfilesChanged() override { ++notifications; }
+  int notifications = 0;
 };
 
 /// Executes enough eligible tasks to settle the test fakes' deferred work.

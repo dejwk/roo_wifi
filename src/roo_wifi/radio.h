@@ -24,28 +24,39 @@ enum class CipherType : uint8_t {
   kAesGmac256
 };
 
-/// One AP; equal SSIDs do not imply equal security or AP identity.
+/// Describes one access point discovered by a scan.
+/// Equal SSIDs do not imply equal security or access-point identity.
 struct ScanRecord {
+  /// Creates an empty scan record with unknown ciphers and no radio metadata.
+  ScanRecord()
+      : pairwise_cipher(CipherType::kUnknown),
+        group_cipher(CipherType::kUnknown),
+        has_radio_metadata(false),
+        use_11b(false),
+        use_11g(false),
+        use_11n(false),
+        supports_wps(false) {}
+
   /// Pairwise cipher reported by the access point when metadata is available.
-  CipherType pairwise_cipher = CipherType::kUnknown;
+  CipherType pairwise_cipher : 4;
 
   /// Group cipher reported by the access point when metadata is available.
-  CipherType group_cipher = CipherType::kUnknown;
+  CipherType group_cipher : 4;
 
   /// Whether cipher and PHY fields were supplied by the native radio.
-  bool has_radio_metadata = false;
+  bool has_radio_metadata : 1;
 
   /// Whether the access point advertises 802.11b support.
-  bool use_11b = false;
+  bool use_11b : 1;
 
   /// Whether the access point advertises 802.11g support.
-  bool use_11g = false;
+  bool use_11g : 1;
 
   /// Whether the access point advertises 802.11n support.
-  bool use_11n = false;
+  bool use_11n : 1;
 
   /// Whether the access point advertises WPS support.
-  bool supports_wps = false;
+  bool supports_wps : 1;
 
   /// Network name observed during the scan.
   Ssid ssid;
@@ -59,8 +70,8 @@ struct ScanRecord {
   /// Received signal strength in dBm.
   int8_t rssi_dbm = -128;
 
-  /// Primary radio channel.
-  uint16_t channel = 0;
+  /// Primary radio channel reported by the radio, or zero when unknown.
+  uint8_t channel = 0;
 };
 
 /// Describes the portable features supported by a selected radio adapter.
@@ -91,6 +102,15 @@ enum class LinkPhase : uint8_t {
 
 /// Reports observed station identity, connectivity, and network diagnostics.
 struct LinkState {
+  /// Creates an idle link with no valid radio, address, or diagnostic metadata.
+  LinkState()
+      : has_radio_info(false),
+        has_station_mac(false),
+        has_ipv4(false),
+        has_dns1(false),
+        has_dns2(false),
+        has_native_code(false) {}
+
   /// Connect operation that established this link, or zero while idle.
   OperationId connection_id = 0;
 
@@ -112,8 +132,8 @@ struct LinkState {
   /// Received signal strength in dBm.
   int8_t rssi_dbm = -128;
 
-  /// Primary radio channel.
-  uint16_t channel = 0;
+  /// Primary radio channel reported by the radio, or zero when unknown.
+  uint8_t channel = 0;
 
   /// IPv4 station address observed after address readiness.
   Ipv4Address address;
@@ -128,28 +148,28 @@ struct LinkState {
   Ipv4Address dns2;
 
   /// Whether radio metadata fields are valid.
-  bool has_radio_info = false;
+  bool has_radio_info : 1;
 
   /// Whether @p station_mac is valid.
-  bool has_station_mac = false;
+  bool has_station_mac : 1;
 
   /// Whether the IPv4 address and gateway are valid.
-  bool has_ipv4 = false;
+  bool has_ipv4 : 1;
 
   /// Whether @p dns1 is valid.
-  bool has_dns1 = false;
+  bool has_dns1 : 1;
 
   /// Whether @p dns2 is valid.
-  bool has_dns2 = false;
+  bool has_dns2 : 1;
+
+  /// Whether @p native_code contains a platform diagnostic.
+  bool has_native_code : 1;
 
   /// Terminal disconnect reason.
   Status reason = Status::kOk;
 
   /// Platform diagnostic code when @p has_native_code is true.
   int32_t native_code = 0;
-
-  /// Whether @p native_code contains a platform diagnostic.
-  bool has_native_code = false;
 };
 
 }  // namespace roo_wifi

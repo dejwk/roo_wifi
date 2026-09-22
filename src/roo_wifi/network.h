@@ -24,7 +24,8 @@ struct Ipv4Address {
   uint8_t bytes[4] = {};
 };
 
-/// Library-defined values; no dependency on native SDK enum numbering.
+/// Identifies a network's authentication mode.
+/// Values are library-defined and independent of native SDK enum numbering.
 enum class AuthMode : uint8_t {
   kUnknown,
   kOpen,

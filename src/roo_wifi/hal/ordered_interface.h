@@ -17,7 +17,7 @@ class NativeStation {
   /// Carries a copied native station event to the ordered adapter.
   struct Event {
     /// Identifies the native lifecycle event represented by this payload.
-    enum Kind {
+    enum Kind : uint8_t {
       kEnabled,
       kDisabled,
       kAssociated,
@@ -96,17 +96,18 @@ class NativeStation {
                           ScanRead &result) const = 0;
 };
 
-/// Preserves one native FIFO and sequences switches through disconnect
-/// outcomes. Owns bounded handoff storage; overflow faults admissions instead
-/// of dropping an event and reusing its operation identity. All public calls
-/// use scheduler context.
+/// Adapts a native station to scheduler-delivered radio operations.
+/// Preserves native event order and sequences network switches through
+/// disconnect outcomes. Owns bounded handoff storage; overflow faults
+/// admissions instead of dropping an event and reusing its operation identity.
+/// All public calls use scheduler context.
 class OrderedInterface : public Interface, private NativeStation::Receiver {
  public:
-  /// Creates an adapter that serializes commands for one native station.
+  /// Creates a radio adapter that serializes commands for borrowed @p native.
   /// @param native Station that outlives this adapter.
   explicit OrderedInterface(NativeStation &native);
 
-  /// Shuts down the adapter and detaches its native station.
+  /// Destroys the radio adapter after shutting down native event dispatch.
   ~OrderedInterface() override;
 
   /// Attaches an event sink and creates deferred dispatch work.
@@ -125,7 +126,7 @@ class OrderedInterface : public Interface, private NativeStation::Receiver {
   /// Starts a bounded scan operation.
   /// @param id Operation ID to complete.
   /// @param max_results Maximum records to retain.
-  Status scan(OperationId id, uint16_t max_results) override;
+  Status startScan(OperationId id, uint16_t max_results) override;
 
   /// Starts a connection operation.
   /// @param id Operation ID to complete.
@@ -138,9 +139,12 @@ class OrderedInterface : public Interface, private NativeStation::Receiver {
   /// @param id Operation ID to complete.
   Status disconnect(OperationId id) override;
 
-  /// Cancels a pending station or scan operation.
-  /// @param id Operation ID to cancel.
-  Status cancel(OperationId id) override;
+  /// Requests native scan cancellation without cancelling station work.
+  Status cancelScan() override;
+
+  /// Requests cancellation of the active connection attempt.
+  /// Completion is delivered after the native teardown event.
+  Status cancelConnect() override;
 
   /// Copies results from the most recent completed scan.
   /// @param out Destination record array.
@@ -153,6 +157,59 @@ class OrderedInterface : public Interface, private NativeStation::Receiver {
   void shutdown() override;
 
  private:
+  /// Stores only the payload consumed for an event's kind in the native FIFO.
+  /// SSID/BSSID remain available for rejecting stale connection events. Full
+  /// link state is assembled only when an event is processed, not per slot.
+  struct QueuedEvent {
+    /// Association metadata, excluding addresses learned by later IP events.
+    struct Association {
+      MacAddress station_mac;
+      AuthMode security;
+      int8_t rssi_dbm;
+      uint8_t channel;
+      bool has_radio_info : 1;
+      bool has_station_mac : 1;
+    };
+
+    /// Address data published by an IP-ready event.
+    struct Addresses {
+      Ipv4Address address;
+      Ipv4Address gateway;
+      Ipv4Address dns1;
+      Ipv4Address dns2;
+      bool has_ipv4 : 1;
+      bool has_dns1 : 1;
+      bool has_dns2 : 1;
+    };
+
+    /// Shares payload storage between mutually exclusive event kinds.
+    union Payload {
+      /// Creates an empty address payload for an unused queue slot.
+      Payload() : addresses{} {}
+
+      Association association;
+      Addresses addresses;
+    };
+
+    /// Creates an empty queue slot; no event is pending until it is assigned.
+    QueuedEvent() = default;
+
+    /// Copies the fields needed to process @p event into compact storage.
+    explicit QueuedEvent(const NativeStation::Event &event);
+
+    /// Reconstructs the event fields used by the station state machine.
+    NativeStation::Event expand() const;
+
+    int32_t native_code = 0;
+    NativeStation::Event::Kind kind = NativeStation::Event::kEnabled;
+    Status status = Status::kOk;
+    Ssid ssid;
+    MacAddress bssid;
+    Payload payload;
+  };
+
+  static_assert(sizeof(QueuedEvent) <= 64, "Native event queue entry budget");
+
   /// Enqueues a native event for scheduler-context processing.
   void post(const NativeStation::Event &) override;
 
@@ -171,13 +228,14 @@ class OrderedInterface : public Interface, private NativeStation::Receiver {
   /// Settles the active scan operation.
   void finishScan(Status, int32_t = 0);
 
-  /// Reports whether the station slot can admit the requested operation ID.
+  /// Reports whether the station transition can admit the requested operation
+  /// ID.
   Status stationAdmission(OperationId) const;
   NativeStation &native_;
   Sink *sink_ = nullptr;
   std::unique_ptr<roo_scheduler::SingletonTask> dispatch_;
   roo::mutex mutex_;
-  std::array<NativeStation::Event, 16> queue_;
+  std::array<QueuedEvent, 16> queue_;
   size_t head_ = 0;
   size_t count_ = 0;
   bool overflow_ = false;

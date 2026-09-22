@@ -17,10 +17,16 @@ enum class MacPolicy : uint8_t { kDevice, kRandomized };
 
 /// Defines static IPv4 settings used when @p IpMode::kStaticIpv4 is selected.
 struct StaticIpv4 {
-  /// IPv4 address, gateway, primary DNS server, and optional secondary DNS.
+  /// IPv4 address to assign to the station.
   Ipv4Address address;
+
+  /// IPv4 address of the default gateway.
   Ipv4Address gateway;
+
+  /// IPv4 address of the primary DNS server.
   Ipv4Address dns1;
+
+  /// IPv4 address of the secondary DNS server, used when @p has_dns2 is true.
   Ipv4Address dns2;
 
   /// CIDR prefix length for @p address, from 1 through 30.
@@ -30,7 +36,8 @@ struct StaticIpv4 {
   bool has_dns2 = false;
 };
 
-/// Connection parameters without secrets; security is an enforced requirement.
+/// Defines the network, addressing, and MAC settings for a connection.
+/// Contains no secrets; security is an enforced requirement.
 struct ConnectionConfig {
   /// Network name to join.
   Ssid ssid;
