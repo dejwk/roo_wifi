@@ -39,11 +39,12 @@ bazel build //:roo_windows_wifi //examples/simple:simple \
 
 ## Tested behavior
 
-- Admission owns input; connection completion requires address readiness.
+- Station intent owns input; connection completion requires address readiness.
 - Switching waits for the old disconnect; delayed events retain their identity.
-- Cancellation before execution and before association, same-SSID retry,
+- Latest-intent replacement before execution, before association, and during
+  DHCP/disconnection; idempotent scan cancellation; same-SSID retry,
   repeated scans, snapshot retention, exclusive ownership and shutdown cleanup.
-- Timeout cancellation holds the radio slot; an unsettled transition closes
+- Timeout cancellation holds native teardown; an unsettled transition closes
   native admission. Late completions cannot finish a new request.
 - FIFO handoff is bounded to 16 owned native events. Overflow faults the
   interface rather than dropping correlation and permitting further commands.
@@ -64,18 +65,19 @@ bazel build //:roo_windows_wifi //examples/simple:simple \
 
 ## Memory measurements
 
-Linux x86-64, exceptions/RTTI disabled. ScanRecord is 50 bytes; Controller is
-880 bytes; OrderedInterface is 2032 bytes (including its fixed event handoff).
+Linux x86-64 Arduino emulation, current state-machine resource test. ScanRecord
+is 50 bytes; Controller is 1416 bytes; OrderedInterface is 2176 bytes (including
+its fixed event handoff).
 Heap counters include scheduler allocation, the fake native scan vector,
 controller records and one fake stored profile. They exclude stack objects,
 allocator bookkeeping and hardware/SDK allocations.
 
 | AP limit | Retained heap bytes | Peak heap bytes |
 | ---: | ---: | ---: |
-| 0 | 1690 | 1691 |
-| 20 | 3690 | 3691 |
-| 40 | 5690 | 5691 |
-| 100 | 11690 | 11691 |
+| 0 | 917 | 917 |
+| 20 | 2917 | 2917 |
+| 40 | 4917 | 4917 |
+| 100 | 10917 | 10917 |
 
 After warm-up, 200 more scan/cancel/profile-load cycles retain the same allocation
 count. Snapshot, link, support and activity observation allocate nothing. These

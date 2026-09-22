@@ -1,3 +1,10 @@
+> The operation-slot API described in this original design has been superseded
+> by the implemented desired-state controller. See [current API migration](backend_migration.md)
+> and [Controller declarations](../src/roo_wifi/controller.h) for station intent,
+> coalesced notifications, scan-specific cancellation, and synchronous writes.
+> The native ordering, storage-format, ownership, and bounded-resource rationale
+> below still applies; the historical public API sketch does not.
+
 # Roo Wi-Fi Backend Foundation Design
 
 ## Implementation status
@@ -705,7 +712,8 @@ class Controller {
   mutation or completion. Listener registration/removal and controller destruction
   occur outside notification. Removing a listener prevents later delivery to it.
 - The core has separate bounded pending slots for station transitions, scans,
-  and a profile write (maximum three), rather than an unbounded request queue.
+  and a profile write, plus one disconnect waiting for a connection to cancel
+  (maximum four), rather than an unbounded request queue.
   HAL conflicts can further restrict admission. Queries and profile reads do
   not consume radio slots. A completed connection keeps only its live LinkState;
   no completed-operation history accumulates in the controller.
@@ -719,7 +727,11 @@ class Controller {
   notification; failed scans retain the prior snapshot. Truncation is explicit.
 - `cancel(id)` requests cancellation of that pending operation; accepted
   cancellation yields one Cancelled result for the original ID. Cancelling a
-  completed ID returns NotFound; disconnect tears down an established link.
+  completed ID returns NotFound. `disconnect()` also interrupts a queued or
+  running connection: it cancels that attempt and reserves a separate request
+  ID for disconnection after cancellation settles. Further station admissions
+  remain Busy. If native cancellation does not settle, both requests time out
+  without starting overlapping native work.
   A queued profile write can be cancelled before it begins. Once synchronous
   storage execution starts, it runs to a resolved result rather than pretending
   that a committed write was cancelled.
