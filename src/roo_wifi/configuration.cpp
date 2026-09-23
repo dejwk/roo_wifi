@@ -28,6 +28,18 @@ bool IsHex(const Credentials &c) {
 }
 }  // namespace
 
+bool SecurityAllows(AuthMode policy, AuthMode mode) {
+  if (policy == AuthMode::kUnknown || mode == AuthMode::kUnknown) return false;
+  if (policy == mode) return true;
+  if (policy == AuthMode::kWpa2Wpa3Personal) {
+    return mode == AuthMode::kWpa2Personal || mode == AuthMode::kWpa3Personal;
+  }
+  if (policy == AuthMode::kWpaWpa2Personal) {
+    return mode == AuthMode::kWpaPersonal || mode == AuthMode::kWpa2Personal;
+  }
+  return false;
+}
+
 Status Validate(const ConnectionConfig &c, const Credentials &secret) {
   // Reject malformed discriminators and lengths before interpreting dependent
   // fields. This also makes invalid enum values safe to receive from storage.

@@ -145,6 +145,20 @@ constructing `WiFi`; the adapter creates the default event loop, station
 netif, and Wi-Fi driver only when they are not already initialized. In either
 environment, leave the physical station exclusively owned by `roo_wifi`.
 
+## Saved security policy
+
+A profile's `connection.security` is a persistent policy. A
+`kWpa2Wpa3Personal` profile accepts WPA2/WPA3, WPA2-only, or WPA3-only APs
+with the same SSID. Likewise, `kWpaWpa2Personal` accepts either constituent
+mode. Single-mode profiles remain strict, and secured profiles never match
+open APs. Existing mixed-mode profiles need no migration or re-saving.
+
+Scan records report advertised security. After association,
+`linkState().security` reports the mode supplied by the station's connection
+event (normally the negotiated protocol). Connecting does not rewrite the
+profile's policy. `SecurityAllows(policy, mode)` exposes the same compatibility
+rule used for AP selection and association validation.
+
 ## Host emulation
 
 Host builds use the roo_testing 2.0 Arduino ESP32 profile. With Bazelisk 1.21

@@ -163,6 +163,91 @@ TEST(Esp32BackendTest, CancelScansWithoutFaulting) {
   EXPECT_EQ(controller.state().scan_status, Status::kOk);
 }
 
+struct NegotiationCase {
+  AuthMode configured;
+  wifi_auth_mode_t advertised;
+  wifi_auth_mode_t negotiated;
+  bool accepted;
+};
+class Esp32NegotiationTest : public ::testing::TestWithParam<NegotiationCase> {};
+
+TEST_P(Esp32NegotiationTest, AcceptsOnlyCompatibleNegotiation) {
+  const auto c = GetParam();
+  using namespace roo_testing_transducers::wifi;
+  auto environment = std::make_shared<Environment>();
+  environment->setScanDurationMs(20);
+  ConnectionAttempt attempt;
+  attempt.negotiated_auth_mode =
+      static_cast<roo_testing_transducers::wifi::AuthMode>(c.negotiated);
+  environment->queueConnectionAttempt(attempt);
+  auto ap = std::make_unique<AccessPoint>(
+      roo_testing_transducers::wifi::MacAddress(2, 0, 0, 0, 1, 1), "mixed");
+  ap->setAuthMode(static_cast<roo_testing_transducers::wifi::AuthMode>(c.advertised));
+  ap->setPasswd("password");
+  environment->addAccessPoint(std::move(ap));
+  FakeEsp32().setWifiEnvironment(environment);
+  roo_scheduler::Scheduler scheduler;
+  Esp32IdfInterface radio;
+  MemoryStore store;
+  store.enabled = true;
+  Controller controller(radio, store, scheduler);
+  ASSERT_EQ(controller.begin(), Status::kOk);
+  RunBackend(scheduler);
+  auto config = TestConfig("mixed");
+  config.security = c.configured;
+  Credentials secret;
+  secret.size = 8;
+  memcpy(secret.bytes, "password", 8);
+  ProfileSettings settings;
+  settings.connection = config;
+  CredentialUpdate update;
+  update.intent = CredentialIntent::kReplace;
+  update.replacement = secret;
+  ASSERT_EQ(controller.saveProfile(7, settings, update), Status::kOk);
+  ASSERT_EQ(controller.connect(7), Status::kOk);
+  RunBackend(scheduler);
+  Profile persisted;
+  ASSERT_EQ(controller.loadProfile(7, persisted), Status::kOk);
+  EXPECT_EQ(persisted.settings.connection.security, c.configured);
+  if (c.accepted) {
+    EXPECT_EQ(controller.linkState().phase, LinkPhase::kAddressReady);
+    auto expected = c.configured;
+    if (c.negotiated == WIFI_AUTH_WPA3_PSK) expected = roo_wifi::AuthMode::kWpa3Personal;
+    if (c.negotiated == WIFI_AUTH_WPA2_PSK) expected = roo_wifi::AuthMode::kWpa2Personal;
+    if (c.negotiated == WIFI_AUTH_WPA_PSK) expected = roo_wifi::AuthMode::kWpaPersonal;
+    EXPECT_EQ(controller.linkState().security, expected);
+  } else {
+    EXPECT_EQ(controller.linkState().phase, LinkPhase::kIdle);
+    EXPECT_EQ(controller.state().status, Status::kConnectionFailed);
+  }
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    MixedAndStrictModes, Esp32NegotiationTest,
+    ::testing::Values(
+        NegotiationCase{AuthMode::kWpa2Wpa3Personal, WIFI_AUTH_WPA3_PSK,
+                        WIFI_AUTH_WPA3_PSK, true},
+        NegotiationCase{AuthMode::kWpa2Wpa3Personal, WIFI_AUTH_WPA2_PSK,
+                        WIFI_AUTH_WPA2_PSK, true},
+        NegotiationCase{AuthMode::kWpaWpa2Personal, WIFI_AUTH_WPA2_PSK,
+                        WIFI_AUTH_WPA2_PSK, true},
+        NegotiationCase{AuthMode::kWpa2Wpa3Personal, WIFI_AUTH_WPA2_WPA3_PSK,
+                        WIFI_AUTH_WPA3_PSK, true},
+        NegotiationCase{AuthMode::kWpa2Wpa3Personal, WIFI_AUTH_WPA2_WPA3_PSK,
+                        WIFI_AUTH_WPA2_PSK, true},
+        NegotiationCase{AuthMode::kWpa2Wpa3Personal, WIFI_AUTH_WPA2_WPA3_PSK,
+                        WIFI_AUTH_WPA2_WPA3_PSK, true},
+        NegotiationCase{AuthMode::kWpaWpa2Personal, WIFI_AUTH_WPA_WPA2_PSK,
+                        WIFI_AUTH_WPA_PSK, true},
+        NegotiationCase{AuthMode::kWpaWpa2Personal, WIFI_AUTH_WPA_WPA2_PSK,
+                        WIFI_AUTH_WPA2_PSK, true},
+        NegotiationCase{AuthMode::kWpa2Wpa3Personal, WIFI_AUTH_WPA2_WPA3_PSK,
+                        WIFI_AUTH_OPEN, false},
+        NegotiationCase{AuthMode::kWpa2Wpa3Personal, WIFI_AUTH_WPA2_WPA3_PSK,
+                        WIFI_AUTH_WPA_PSK, false},
+        NegotiationCase{AuthMode::kWpa3Personal, WIFI_AUTH_WPA3_PSK,
+                        WIFI_AUTH_WPA2_PSK, false}));
+
 // Verifies a second owner cannot attach to the process-global station.
 TEST(Esp32BackendTest, ExclusiveOwnership) {
   roo_scheduler::Scheduler scheduler;

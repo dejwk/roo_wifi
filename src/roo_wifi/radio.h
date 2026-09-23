@@ -126,7 +126,8 @@ struct LinkState {
   /// Station MAC address last reported by the radio.
   MacAddress station_mac;
 
-  /// Authentication mode last reported by the access point.
+  /// Requested policy while connecting, then the negotiated authentication
+  /// mode reported by the station after association.
   AuthMode security = AuthMode::kUnknown;
 
   /// Received signal strength in dBm.

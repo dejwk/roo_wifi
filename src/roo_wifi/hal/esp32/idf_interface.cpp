@@ -360,9 +360,15 @@ Status Esp32Station::startSelected(const wifi_ap_record_t &ap) {
       dns2.ip.u_addr.ip4 = Address(settings.dns2);
     }
   }
-  if (esp_netif_set_ip_info(netif, &ip) != ESP_OK ||
-      esp_netif_set_dns_info(netif, ESP_NETIF_DNS_MAIN, &dns1) != ESP_OK ||
-      esp_netif_set_dns_info(netif, ESP_NETIF_DNS_BACKUP, &dns2) != ESP_OK) {
+  // Resetting station IP info clears main/backup DNS in ESP-IDF. Its DNS
+  // setter rejects 0.0.0.0, so only write explicitly configured static servers.
+  if (esp_netif_set_ip_info(netif, &ip) != ESP_OK) {
+    return Status::kConnectionFailed;
+  }
+  if (config_.ip_mode == IpMode::kStaticIpv4 &&
+      (esp_netif_set_dns_info(netif, ESP_NETIF_DNS_MAIN, &dns1) != ESP_OK ||
+       (config_.static_ipv4.has_dns2 &&
+        esp_netif_set_dns_info(netif, ESP_NETIF_DNS_BACKUP, &dns2) != ESP_OK))) {
     return Status::kConnectionFailed;
   }
   if (config_.ip_mode == IpMode::kDhcp) {
@@ -424,7 +430,7 @@ void Esp32Station::event(esp_event_base_t base, int32_t id, void *data) {
           selecting_ = false;
           if (!scan_cancelled_ && event.status == Status::kOk) {
             for (size_t i = 0; i < fetched; ++i) {
-              if (Auth(aps[i].authmode) != config_.security) continue;
+              if (!SecurityAllows(config_.security, Auth(aps[i].authmode))) continue;
               selected_ = aps[i];
               prepared_ = true;
               receiver_->post({Event::kPrepared});
@@ -451,7 +457,7 @@ void Esp32Station::event(esp_event_base_t base, int32_t id, void *data) {
       case WIFI_EVENT_STA_CONNECTED: {
         const wifi_event_sta_connected_t &info =
             *static_cast<wifi_event_sta_connected_t *>(data);
-        if (Auth(info.authmode) != config_.security) {
+        if (!SecurityAllows(config_.security, Auth(info.authmode))) {
           lock.unlock();
           esp_wifi_disconnect();
           return;

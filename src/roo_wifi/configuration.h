@@ -42,7 +42,8 @@ struct ConnectionConfig {
   /// Network name to join.
   Ssid ssid;
 
-  /// Authentication requirement for the selected access point.
+  /// Allowed authentication modes. Mixed modes also allow either constituent
+  /// mode when a router changes configuration; strict modes remain strict.
   AuthMode security = AuthMode::kUnknown;
 
   /// Whether the scan and connection should include a hidden network.
@@ -72,6 +73,11 @@ struct Credentials {
   /// Number of meaningful bytes in @p bytes.
   uint8_t size = 0;
 };
+
+/// Tests whether an advertised or negotiated mode is allowed by a policy.
+/// Mixed policies allow either constituent mode as well as the mixed mode.
+/// Unknown modes are never compatible.
+bool SecurityAllows(AuthMode policy, AuthMode mode);
 
 /// Validates portable connection settings and credential encoding.
 /// @param config Network and IP settings to validate.
