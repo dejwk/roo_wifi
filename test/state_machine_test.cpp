@@ -40,8 +40,8 @@ TEST_F(BackendTest, NotificationsAreCoalescedByCategory) {
   settings.connection = TestConfig();
   CredentialUpdate update;
   update.intent = CredentialIntent::kClear;
-  ASSERT_EQ(controller.saveProfile(10, settings, update), Status::kOk);
-  ASSERT_EQ(controller.removeProfile(10), Status::kOk);
+  ASSERT_EQ(controller.saveProfile(settings, update), Status::kOk);
+  ASSERT_EQ(controller.removeProfile(settings.connection.ssid), Status::kOk);
   ASSERT_EQ(controller.startScan(), Status::kOk);
   ASSERT_EQ(controller.cancelScan(), Status::kOk);
   EXPECT_EQ(listener.scan, 0);
@@ -84,7 +84,7 @@ TEST_F(BackendTest, NotificationCallbacksCanQueueAnotherCategory) {
   settings.connection = TestConfig();
   CredentialUpdate update;
   update.intent = CredentialIntent::kClear;
-  ASSERT_EQ(controller.saveProfile(10, settings, update), Status::kOk);
+  ASSERT_EQ(controller.saveProfile(settings, update), Status::kOk);
   Pump(scheduler);
   EXPECT_EQ(listener.profiles, 1);
   EXPECT_EQ(listener.scans, 1);
@@ -109,7 +109,7 @@ TEST_F(BackendTest, ShutdownStopsRemainingNotificationCategories) {
   settings.connection = TestConfig();
   CredentialUpdate update;
   update.intent = CredentialIntent::kClear;
-  ASSERT_EQ(controller.saveProfile(10, settings, update), Status::kOk);
+  ASSERT_EQ(controller.saveProfile(settings, update), Status::kOk);
   ASSERT_EQ(controller.startScan(), Status::kOk);
   Pump(scheduler);
   EXPECT_EQ(listener.scans, 1);
@@ -320,12 +320,13 @@ TEST_F(BackendTest, WritesAreSynchronousAndNotifyAsynchronously) {
   settings.connection = TestConfig();
   CredentialUpdate update;
   update.intent = CredentialIntent::kClear;
-  EXPECT_EQ(controller.saveProfile(42, settings, update), Status::kOk);
+  EXPECT_EQ(controller.saveProfile(settings, update), Status::kOk);
   Profile p;
-  EXPECT_EQ(controller.loadProfile(42, p), Status::kOk);
+  EXPECT_EQ(controller.loadProfile(settings.connection.ssid, p), Status::kOk);
   EXPECT_EQ(observer.notifications, 0);
-  EXPECT_EQ(controller.removeProfile(42), Status::kOk);
-  EXPECT_EQ(controller.loadProfile(42, p), Status::kNotFound);
+  EXPECT_EQ(controller.removeProfile(settings.connection.ssid), Status::kOk);
+  EXPECT_EQ(controller.loadProfile(settings.connection.ssid, p),
+            Status::kNotFound);
   Pump(scheduler);
   EXPECT_EQ(observer.notifications, 1);
   EXPECT_EQ(controller.state().profiles_generation, 2u);
@@ -379,14 +380,14 @@ TEST_F(BackendTest, SavedProfileSuccessAndDisconnectSuppressRetry) {
   p.auto_connect = true;
   CredentialUpdate u;
   u.intent = CredentialIntent::kClear;
-  ASSERT_EQ(controller.saveProfile(7, p, u), Status::kOk);
-  ASSERT_EQ(controller.connect(7), Status::kOk);
+  ASSERT_EQ(controller.saveProfile(p, u), Status::kOk);
+  ASSERT_EQ(controller.connect(p.connection.ssid), Status::kOk);
   Pump(scheduler);
   ready();
-  EXPECT_EQ(controller.state().connected_profile, 7u);
-  ProfileId last = 0;
+  EXPECT_EQ(controller.state().connected_profile, p.connection.ssid);
+  Ssid last;
   EXPECT_EQ(store.readLastProfile(last), Status::kOk);
-  EXPECT_EQ(last, 7u);
+  EXPECT_EQ(last, p.connection.ssid);
   controller.disconnect();
   Pump(scheduler);
   native.disconnected();
@@ -436,7 +437,7 @@ TEST(TimeoutTest, UnsettledCancellationFaultsAndPreservesWrites) {
   p.connection = TestConfig();
   CredentialUpdate u;
   u.intent = CredentialIntent::kClear;
-  EXPECT_EQ(controller.saveProfile(1, p, u), Status::kOk);
+  EXPECT_EQ(controller.saveProfile(p, u), Status::kOk);
 }
 // Verifies connection timeout settles without fault.
 TEST(TimeoutTest, ConnectionTimeoutSettlesWithoutFault) {
@@ -472,8 +473,8 @@ TEST(StartupTest, RestoresLastProfileUnlessExplicitlySuperseded) {
   p.auto_connect = true;
   CredentialUpdate u;
   u.intent = CredentialIntent::kClear;
-  store.saveProfile(1, p, u);
-  store.writeLastProfile(1);
+  store.saveProfile(p, u);
+  store.writeLastProfile(p.connection.ssid);
   Controller controller(radio, store, scheduler);
   controller.begin();
   controller.disconnect();

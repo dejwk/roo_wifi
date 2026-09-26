@@ -1,6 +1,6 @@
 {
     "name": "roo_wifi",
-    "description": "Portable Wi-Fi operations and known-key profiles, with an ESP32 ESP-IDF adapter.",
+    "description": "Portable Wi-Fi operations and SSID-addressed profiles, with an ESP32 ESP-IDF adapter.",
     "keywords": [
         "WiFi"
     ],

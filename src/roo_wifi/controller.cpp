@@ -169,7 +169,7 @@ Status Controller::setEnabled(bool enabled) {
     return Status::kOk;
   }
   state_.desired = enabled ? Target::kDisconnected : Target::kDisabled;
-  state_.desired_profile = 0;
+  state_.desired_profile = {};
   credentials_ = {};
   auto_connect_ = false;
   restore_profile_ = enabled;
@@ -179,7 +179,7 @@ Status Controller::setEnabled(bool enabled) {
 
 Status Controller::requestConnection(const ConnectionConfig& config,
                                      const Credentials& credentials,
-                                     ProfileId profile, bool automatic) {
+                                     const Ssid& profile, bool automatic) {
   Status status = admission();
   if (status != Status::kOk) return status;
   if (state_.desired == Target::kDisabled) return Status::kDisabled;
@@ -207,17 +207,17 @@ Status Controller::requestConnection(const ConnectionConfig& config,
 
 Status Controller::connect(const ConnectionConfig& config,
                            const Credentials& credentials) {
-  return requestConnection(config, credentials, 0, false);
+  return requestConnection(config, credentials, {}, false);
 }
 
-Status Controller::connect(ProfileId id) {
+Status Controller::connect(const Ssid& ssid) {
   Profile profile;
   Credentials credentials;
-  Status status = loadProfile(id, profile);
+  Status status = loadProfile(ssid, profile);
   if (status != Status::kOk) return status;
-  status = store_.loadCredentials(id, credentials);
+  status = store_.loadCredentials(ssid, credentials);
   if (status != Status::kOk) return status;
-  return requestConnection(profile.settings.connection, credentials, id,
+  return requestConnection(profile.settings.connection, credentials, ssid,
                            profile.settings.auto_connect);
 }
 
@@ -226,12 +226,13 @@ Status Controller::disconnect() {
   if (status != Status::kOk) return status;
   restore_profile_ = false;
   auto_connect_ = false;
-  if (state_.desired != Target::kConnected && state_.status == Status::kOk)
+  if (state_.desired != Target::kConnected && state_.status == Status::kOk) {
     return Status::kOk;
+  }
   if (state_.desired != Target::kDisabled) {
     state_.desired = Target::kDisconnected;
   }
-  state_.desired_profile = 0;
+  state_.desired_profile = {};
   credentials_ = {};
   newIntent();
   return Status::kOk;
@@ -280,25 +281,32 @@ Status Controller::cancelScan() {
   return Status::kOk;
 }
 
-Status Controller::loadProfile(ProfileId id, Profile& out) const {
+Status Controller::loadProfile(const Ssid& ssid, Profile& out) const {
   if (!running_) return Status::kNotStarted;
-  return id == 0 ? Status::kInvalidArgument : store_.loadProfile(id, out);
+  return (ssid.size == 0 || ssid.size > sizeof(ssid.bytes))
+             ? Status::kInvalidArgument
+             : store_.loadProfile(ssid, out);
 }
 
-Status Controller::saveProfile(ProfileId id, const ProfileSettings& settings,
+Status Controller::saveProfile(const ProfileSettings& settings,
                                const CredentialUpdate& credentials) {
+  const Ssid& ssid = settings.connection.ssid;
   if (!running_) return Status::kNotStarted;
-  if (id == 0) return Status::kInvalidArgument;
-  Status status = store_.saveProfile(id, settings, credentials);
+  if (ssid.size == 0 || ssid.size > sizeof(ssid.bytes)) {
+    return Status::kInvalidArgument;
+  }
+  Status status = store_.saveProfile(settings, credentials);
   ++state_.profiles_generation;
   changed(Change::kProfiles);
   return status;
 }
 
-Status Controller::removeProfile(ProfileId id) {
+Status Controller::removeProfile(const Ssid& ssid) {
   if (!running_) return Status::kNotStarted;
-  if (id == 0) return Status::kInvalidArgument;
-  Status status = store_.removeProfile(id);
+  if (ssid.size == 0 || ssid.size > sizeof(ssid.bytes)) {
+    return Status::kInvalidArgument;
+  }
+  Status status = store_.removeProfile(ssid);
   ++state_.profiles_generation;
   changed(Change::kProfiles);
   return status;
@@ -306,13 +314,16 @@ Status Controller::removeProfile(ProfileId id) {
 
 void Controller::restoreProfile() {
   restore_profile_ = false;
-  ProfileId id = 0;
-  Status status = store_.readLastProfile(id);
+  Ssid ssid;
+  Status status = store_.readLastProfile(ssid);
   if (status == Status::kNotFound) return;
   Profile profile;
-  if (status == Status::kOk && id != 0) status = loadProfile(id, profile);
-  if (status == Status::kOk && id != 0 && profile.settings.auto_connect) {
-    status = connect(id);
+  if (status == Status::kOk && ssid.size != 0) {
+    status = loadProfile(ssid, profile);
+  }
+  if (status == Status::kOk && ssid.size != 0 &&
+      profile.settings.auto_connect) {
+    status = connect(ssid);
   }
   if (status != Status::kOk) {
     state_.status = status;
@@ -534,14 +545,16 @@ void Controller::onOperationFinished(const OperationResult& result) {
   if (!superseded) {
     if (completed == Transition::kConnect && status == Status::kOk) {
       state_.connected_profile = state_.desired_profile;
-      if (state_.desired_profile != 0)
+      if (state_.desired_profile.size != 0) {
         status = store_.writeLastProfile(state_.desired_profile);
+      }
     }
     state_.status = status;
     state_.native_code = result.native_code;
     state_.has_native_code = result.has_native_code;
-    if (completed == Transition::kConnect || status != Status::kOk)
+    if (completed == Transition::kConnect || status != Status::kOk) {
       attempted_revision_ = state_.revision;
+    }
     if (completed == Transition::kConnect &&
         status == Status::kConnectionFailed && auto_connect_) {
       retry_waiting_ = true;
@@ -568,7 +581,7 @@ void Controller::onLinkChanged(const LinkState& link) {
   }
   state_.link = link;
   if (link.phase == LinkPhase::kIdle) {
-    state_.connected_profile = 0;
+    state_.connected_profile = {};
     if (transition_ == Transition::kNone &&
         state_.desired == Target::kConnected) {
       state_.status =

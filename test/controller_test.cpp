@@ -147,8 +147,8 @@ TEST_F(BackendTest, DisconnectWhileWaitingForIpIgnoresQueuedReadiness) {
   settings.auto_connect = true;
   CredentialUpdate update;
   update.intent = CredentialIntent::kClear;
-  ASSERT_EQ(controller.saveProfile(42, settings, update), Status::kOk);
-  ASSERT_EQ(controller.connect(42), Status::kOk);
+  ASSERT_EQ(controller.saveProfile(settings, update), Status::kOk);
+  ASSERT_EQ(controller.connect(settings.connection.ssid), Status::kOk);
   Pump(scheduler);
   native.associated();
   Pump(scheduler);
@@ -158,7 +158,7 @@ TEST_F(BackendTest, DisconnectWhileWaitingForIpIgnoresQueuedReadiness) {
   native.disconnected();
   Pump(scheduler);
   EXPECT_EQ(controller.state().station, Controller::StationPhase::kIdle);
-  ProfileId last = 0;
+  Ssid last;
   EXPECT_EQ(store.readLastProfile(last), Status::kNotFound);
   scheduler.delay(roo_time::Seconds(6));
   Pump(scheduler);
@@ -228,10 +228,10 @@ TEST_F(BackendTest, SynchronousSaveDuringScan) {
   p.connection = TestConfig();
   CredentialUpdate u;
   u.intent = CredentialIntent::kClear;
-  ASSERT_EQ(controller.saveProfile(42, p, u), Status::kOk);
+  ASSERT_EQ(controller.saveProfile(p, u), Status::kOk);
   EXPECT_EQ(observer.notifications, 0);
   Profile out;
-  EXPECT_EQ(store.loadProfile(42, out), Status::kOk);
+  EXPECT_EQ(store.loadProfile(p.connection.ssid, out), Status::kOk);
   Pump(scheduler);
   EXPECT_TRUE(controller.isScanning());
   EXPECT_EQ(controller.state().profiles_generation, 1u);
@@ -296,23 +296,23 @@ TEST_F(BackendTest, TemporaryConnectionDoesNotPersist) {
   EXPECT_TRUE(store.values.empty());
 }
 
-// A rejected settings replacement leaves the previous profile readable.
+// Verifies a rejected settings replacement leaves the prior profile readable.
 TEST(StoreTest, FailedBlobWritePreservesPreviousProfile) {
   ProfileSettings p;
   p.connection = TestConfig();
   CredentialUpdate u;
   u.intent = CredentialIntent::kClear;
   MemoryStore store;
-  ASSERT_EQ(store.saveProfile(1, p, u), Status::kOk);
+  ASSERT_EQ(store.saveProfile(p, u), Status::kOk);
   store.fail_at = store.writes + 1;
   p.connection.hidden = true;
-  EXPECT_EQ(store.saveProfile(1, p, u), Status::kStorageFailure);
+  EXPECT_EQ(store.saveProfile(p, u), Status::kStorageFailure);
   Profile out;
-  ASSERT_EQ(store.loadProfile(1, out), Status::kOk);
+  ASSERT_EQ(store.loadProfile(p.connection.ssid, out), Status::kOk);
   EXPECT_FALSE(out.settings.connection.hidden);
   store.fail_at = -1;
-  EXPECT_EQ(store.saveProfile(1, p, u), Status::kOk);
-  ASSERT_EQ(store.loadProfile(1, out), Status::kOk);
+  EXPECT_EQ(store.saveProfile(p, u), Status::kOk);
+  ASSERT_EQ(store.loadProfile(p.connection.ssid, out), Status::kOk);
   EXPECT_TRUE(out.settings.connection.hidden);
 }
 
@@ -337,14 +337,14 @@ TEST(StoreTest, ProfileAndSecretBlobsRoundTripAllFields) {
   update.replacement.size = 8;
   memcpy(update.replacement.bytes, "password", 8);
 
-  ASSERT_EQ(store.saveProfile(0x1234, settings, update), Status::kOk);
+  ASSERT_EQ(store.saveProfile(settings, update), Status::kOk);
   ASSERT_EQ(store.values.size(), 2u);
-  EXPECT_NE(store.values.find("p-00001234"), store.values.end());
-  EXPECT_NE(store.values.find("s-00001234"), store.values.end());
+  EXPECT_NE(store.values.find("p-Qq2GTETDNQY"), store.values.end());
+  EXPECT_NE(store.values.find("s-Qq2GTETDNQY"), store.values.end());
 
   Profile profile;
-  ASSERT_EQ(store.loadProfile(0x1234, profile), Status::kOk);
-  EXPECT_EQ(profile.id, 0x1234u);
+  ASSERT_EQ(store.loadProfile(settings.connection.ssid, profile), Status::kOk);
+  EXPECT_EQ(profile.settings.connection.ssid, settings.connection.ssid);
   EXPECT_TRUE(profile.has_credentials);
   EXPECT_EQ(profile.settings.connection.ssid.size,
             settings.connection.ssid.size);
@@ -364,21 +364,24 @@ TEST(StoreTest, ProfileAndSecretBlobsRoundTripAllFields) {
   EXPECT_EQ(profile.settings.connection.mac_policy, MacPolicy::kRandomized);
   EXPECT_FALSE(profile.settings.auto_connect);
   Credentials credentials;
-  ASSERT_EQ(store.loadCredentials(0x1234, credentials), Status::kOk);
+  ASSERT_EQ(store.loadCredentials(settings.connection.ssid, credentials),
+            Status::kOk);
   EXPECT_EQ(credentials.size, 8);
   EXPECT_EQ(memcmp(credentials.bytes, "password", 8), 0);
 
-  std::vector<uint8_t> profile_data = store.values["p-00001234"];
+  std::vector<uint8_t> profile_data = store.values["p-Qq2GTETDNQY"];
   int writes = store.writes;
   memcpy(update.replacement.bytes, "new-pass", 8);
-  ASSERT_EQ(store.saveProfile(0x1234, settings, update), Status::kOk);
+  ASSERT_EQ(store.saveProfile(settings, update), Status::kOk);
   EXPECT_EQ(store.writes, writes + 1);
-  EXPECT_EQ(store.values["p-00001234"], profile_data);
-  ASSERT_EQ(store.loadCredentials(0x1234, credentials), Status::kOk);
+  EXPECT_EQ(store.values["p-Qq2GTETDNQY"], profile_data);
+  ASSERT_EQ(store.loadCredentials(settings.connection.ssid, credentials),
+            Status::kOk);
   EXPECT_EQ(memcmp(credentials.bytes, "new-pass", 8), 0);
 
-  store.values["p-00001234"].push_back(0);
-  EXPECT_EQ(store.loadProfile(0x1234, profile), Status::kCorrupt);
+  store.values["p-Qq2GTETDNQY"].push_back(0);
+  EXPECT_EQ(store.loadProfile(settings.connection.ssid, profile),
+            Status::kCorrupt);
 }
 
 // Verifies a failed blob erase leaves the profile intact and can be retried.
@@ -388,99 +391,66 @@ TEST(StoreTest, FailedDeleteCleanupAndRetry) {
   p.connection = TestConfig();
   CredentialUpdate u;
   u.intent = CredentialIntent::kClear;
-  ASSERT_EQ(store.saveProfile(7, p, u), Status::kOk);
+  ASSERT_EQ(store.saveProfile(p, u), Status::kOk);
   store.fail_at = store.writes + 1;
-  EXPECT_EQ(store.removeProfile(7), Status::kStorageFailure);
+  EXPECT_EQ(store.removeProfile(p.connection.ssid), Status::kStorageFailure);
   Profile out;
-  EXPECT_EQ(store.loadProfile(7, out), Status::kOk);
+  EXPECT_EQ(store.loadProfile(p.connection.ssid, out), Status::kOk);
   store.fail_at = -1;
-  ASSERT_EQ(store.writeLastProfile(7), Status::kOk);
-  EXPECT_EQ(store.removeProfile(7), Status::kOk);
+  ASSERT_EQ(store.writeLastProfile(p.connection.ssid), Status::kOk);
+  EXPECT_EQ(store.removeProfile(p.connection.ssid), Status::kOk);
   EXPECT_TRUE(store.values.empty());
-  ProfileId last;
+  Ssid last;
   EXPECT_EQ(store.readLastProfile(last), Status::kNotFound);
 }
 
-// Verifies enumeration exposes only settings blobs and can stop early.
+// Verifies one configuration per exact SSID, enumeration and early stopping.
 TEST(StoreTest, EnumeratesProfiles) {
   MemoryStore store;
   ProfileSettings settings;
-  settings.connection = TestConfig();
   CredentialUpdate update;
   update.intent = CredentialIntent::kClear;
-  ASSERT_EQ(store.saveProfile(42, settings, update), Status::kOk);
-  ASSERT_EQ(store.saveProfile(7, settings, update), Status::kOk);
-  ASSERT_EQ(store.saveProfile(9, settings, update), Status::kOk);
-  ASSERT_EQ(store.removeProfile(9), Status::kOk);
-  store.values["s-0000000b"] = {0x10};  // Orphaned secret is not a profile.
-  store.values["not-a-profile"] = {0x11};
-
-  std::vector<ProfileId> ids;
-  EXPECT_EQ(store.forEachProfile([&](ProfileId id) {
-    ids.push_back(id);
+  for (const char* name : {"first", "second", "removed"}) {
+    settings.connection = TestConfig(name);
+    ASSERT_EQ(store.saveProfile(settings, update), Status::kOk);
+  }
+  ASSERT_EQ(store.removeProfile(TestConfig("removed").ssid), Status::kOk);
+  store.values["s-orphan"] = {0x10};
+  store.values["p-00000002"] = {0xff};  // Legacy IDs are ignored.
+  std::vector<Ssid> ssids;
+  EXPECT_EQ(store.forEachProfile([&](const Ssid& ssid) {
+    ssids.push_back(ssid);
     return true;
   }),
             Status::kOk);
-  std::sort(ids.begin(), ids.end());
-  EXPECT_EQ(ids, (std::vector<ProfileId>{7, 42}));
-
+  ASSERT_EQ(ssids.size(), 2u);
+  EXPECT_NE(std::find(ssids.begin(), ssids.end(), TestConfig("first").ssid),
+            ssids.end());
+  EXPECT_NE(std::find(ssids.begin(), ssids.end(), TestConfig("second").ssid),
+            ssids.end());
   int visits = 0;
-  EXPECT_EQ(store.forEachProfile([&](ProfileId) {
+  EXPECT_EQ(store.forEachProfile([&](const Ssid&) {
     ++visits;
     return false;
   }),
             Status::kStopped);
   EXPECT_EQ(visits, 1);
+  store.enumeration_error = Status::kStorageFailure;
+  EXPECT_EQ(store.forEachProfile([](const Ssid&) { return true; }),
+            Status::kStorageFailure);
 }
 
-// Verifies empty enumeration, boundary IDs, and underlying failures.
-TEST(StoreTest, EnumerationBoundariesAndFailures) {
+// Verifies corrupt settings cannot supply a trusted SSID during enumeration.
+TEST(StoreTest, EnumerationAndCorruptProfiles) {
   MemoryStore store;
-  int visits = 0;
-  EXPECT_EQ(store.forEachProfile([&](ProfileId) {
-    ++visits;
-    return true;
-  }),
-            Status::kOk);
-  EXPECT_EQ(visits, 0);
-
   ProfileSettings settings;
   settings.connection = TestConfig();
   CredentialUpdate update;
   update.intent = CredentialIntent::kClear;
-  ASSERT_EQ(store.saveProfile(1, settings, update), Status::kOk);
-  ASSERT_EQ(store.saveProfile(UINT32_MAX, settings, update), Status::kOk);
-  std::vector<ProfileId> ids;
-  ASSERT_EQ(store.forEachProfile([&](ProfileId id) {
-    ids.push_back(id);
-    return true;
-  }),
-            Status::kOk);
-  std::sort(ids.begin(), ids.end());
-  EXPECT_EQ(ids, (std::vector<ProfileId>{1, UINT32_MAX}));
-
-  store.enumeration_error = Status::kUnsupported;
-  EXPECT_EQ(store.forEachProfile([](ProfileId) { return true; }),
-            Status::kUnsupported);
-  store.enumeration_error = Status::kStorageFailure;
-  EXPECT_EQ(store.forEachProfile([](ProfileId) { return true; }),
-            Status::kStorageFailure);
-}
-
-// Verifies blob corruption is reported by loading without hiding the ID.
-TEST(StoreTest, EnumerationAndCorruptProfiles) {
-  MemoryStore store;
-  store.values["p-00000002"] = {0xff};
-  int visits = 0;
-  EXPECT_EQ(store.forEachProfile([&](ProfileId id) {
-    ++visits;
-    EXPECT_EQ(id, 2u);
-    Profile profile;
-    EXPECT_EQ(store.loadProfile(id, profile), Status::kCorrupt);
-    return true;
-  }),
-            Status::kOk);
-  EXPECT_EQ(visits, 1);
+  ASSERT_EQ(store.saveProfile(settings, update), Status::kOk);
+  store.values.begin()->second = {0xff};
+  EXPECT_EQ(store.forEachProfile([](const Ssid&) { return true; }),
+            Status::kCorrupt);
 }
 
 // Verifies the controller gates enumeration on its lifecycle and permits
@@ -491,7 +461,7 @@ TEST(ProfileEnumerationTest, ControllerFacade) {
   OrderedInterface radio(native);
   MemoryStore store;
   Controller controller(radio, store, scheduler);
-  EXPECT_EQ(controller.forEachProfile([](ProfileId) { return true; }),
+  EXPECT_EQ(controller.forEachProfile([](Ssid) { return true; }),
             Status::kNotStarted);
   ASSERT_EQ(controller.begin(), Status::kOk);
   Pump(scheduler);
@@ -500,11 +470,11 @@ TEST(ProfileEnumerationTest, ControllerFacade) {
   settings.connection = TestConfig("enumerated");
   CredentialUpdate update;
   update.intent = CredentialIntent::kClear;
-  ASSERT_EQ(store.saveProfile(17, settings, update), Status::kOk);
-  EXPECT_EQ(controller.forEachProfile([&](ProfileId id) {
+  ASSERT_EQ(store.saveProfile(settings, update), Status::kOk);
+  EXPECT_EQ(controller.forEachProfile([&](Ssid id) {
     Profile profile;
     EXPECT_EQ(controller.loadProfile(id, profile), Status::kOk);
-    EXPECT_EQ(profile.id, 17u);
+    EXPECT_EQ(profile.settings.connection.ssid, settings.connection.ssid);
     return true;
   }),
             Status::kOk);
@@ -529,7 +499,7 @@ TEST(ProfileEnumerationTest, ReloadsFromProfilesChanged) {
     void onProfilesChanged() override {
       ++notifications;
       ids.clear();
-      status = controller.forEachProfile([&](ProfileId id) {
+      status = controller.forEachProfile([&](Ssid id) {
         ids.push_back(id);
         return true;
       });
@@ -538,7 +508,7 @@ TEST(ProfileEnumerationTest, ReloadsFromProfilesChanged) {
     Controller& controller;
     int notifications = 0;
     Status status = Status::kNotStarted;
-    std::vector<ProfileId> ids;
+    std::vector<Ssid> ids;
   } listener(controller);
   controller.addListener(listener);
 
@@ -546,11 +516,11 @@ TEST(ProfileEnumerationTest, ReloadsFromProfilesChanged) {
   settings.connection = TestConfig("notified");
   CredentialUpdate update;
   update.intent = CredentialIntent::kClear;
-  ASSERT_EQ(controller.saveProfile(23, settings, update), Status::kOk);
+  ASSERT_EQ(controller.saveProfile(settings, update), Status::kOk);
   Pump(scheduler);
   EXPECT_EQ(listener.notifications, 1);
   EXPECT_EQ(listener.status, Status::kOk);
-  EXPECT_EQ(listener.ids, (std::vector<ProfileId>{23}));
+  EXPECT_EQ(listener.ids, (std::vector<Ssid>{settings.connection.ssid}));
 
   controller.removeListener(listener);
 }
@@ -566,16 +536,16 @@ TEST(StoreTest, ExplicitCredentialIntent) {
   u.intent = CredentialIntent::kReplace;
   u.replacement.size = 8;
   memcpy(u.replacement.bytes, "password", 8);
-  ASSERT_EQ(store.saveProfile(9, p, u), Status::kOk);
+  ASSERT_EQ(store.saveProfile(p, u), Status::kOk);
   u.intent = CredentialIntent::kKeep;
   p.connection.hidden = true;
-  EXPECT_EQ(store.saveProfile(9, p, u), Status::kOk);
+  EXPECT_EQ(store.saveProfile(p, u), Status::kOk);
   Credentials c;
-  EXPECT_EQ(store.loadCredentials(9, c), Status::kOk);
+  EXPECT_EQ(store.loadCredentials(p.connection.ssid, c), Status::kOk);
   EXPECT_EQ(c.size, 8u);
   u.intent = CredentialIntent::kClear;
   u.replacement = {};
-  EXPECT_EQ(store.saveProfile(9, p, u), Status::kInvalidArgument);
+  EXPECT_EQ(store.saveProfile(p, u), Status::kInvalidArgument);
 }
 
 // Verifies static IPv4 and security values are validated independently of a UI.
@@ -628,10 +598,10 @@ TEST(TimeoutTest, UnsettledNativeWorkCannotOverlapNewAttempt) {
   settings.connection = TestConfig();
   CredentialUpdate update;
   update.intent = CredentialIntent::kClear;
-  EXPECT_EQ(controller.saveProfile(1, settings, update), Status::kOk);
+  EXPECT_EQ(controller.saveProfile(settings, update), Status::kOk);
   Pump(scheduler);
   Profile out;
-  EXPECT_EQ(controller.loadProfile(1, out), Status::kOk);
+  EXPECT_EQ(controller.loadProfile(settings.connection.ssid, out), Status::kOk);
   controller.removeListener(observer);
 }
 
@@ -698,8 +668,8 @@ TEST(StartupTest, LastProfileAndAdmissionSnapshot) {
   settings.connection = TestConfig("saved");
   CredentialUpdate update;
   update.intent = CredentialIntent::kClear;
-  ASSERT_EQ(store.saveProfile(1, settings, update), Status::kOk);
-  ASSERT_EQ(store.writeLastProfile(1), Status::kOk);
+  ASSERT_EQ(store.saveProfile(settings, update), Status::kOk);
+  ASSERT_EQ(store.writeLastProfile(settings.connection.ssid), Status::kOk);
   Controller controller(radio, store, scheduler);
   ASSERT_EQ(controller.begin(), Status::kOk);
   Pump(scheduler);
@@ -710,7 +680,7 @@ TEST(StartupTest, LastProfileAndAdmissionSnapshot) {
   EXPECT_EQ(native.connects, 1);
   EXPECT_EQ(native.last_config.ssid.bytes[0], 's');
   settings.connection = TestConfig("changed");
-  controller.saveProfile(1, settings, update);
+  controller.saveProfile(settings, update);
   Pump(scheduler);
   EXPECT_EQ(native.last_config.ssid.bytes[0], 's');
 }
@@ -722,16 +692,16 @@ TEST_F(BackendTest, RemembersLastSuccessfulSavedProfile) {
   settings.connection = TestConfig("remembered-open");
   CredentialUpdate update;
   update.intent = CredentialIntent::kClear;
-  ASSERT_EQ(store.saveProfile(31, settings, update), Status::kOk);
+  ASSERT_EQ(store.saveProfile(settings, update), Status::kOk);
 
-  ASSERT_EQ(controller.connect(31), Status::kOk);
+  ASSERT_EQ(controller.connect(settings.connection.ssid), Status::kOk);
   Pump(scheduler);
   native.associated();
   native.ready();
   Pump(scheduler);
-  ProfileId last = 0;
+  Ssid last;
   EXPECT_EQ(store.readLastProfile(last), Status::kOk);
-  EXPECT_EQ(last, 31u);
+  EXPECT_EQ(last, settings.connection.ssid);
 
   ASSERT_EQ(controller.connect(TestConfig("temporary"), {}), Status::kOk);
   Pump(scheduler);
@@ -741,7 +711,7 @@ TEST_F(BackendTest, RemembersLastSuccessfulSavedProfile) {
   native.ready();
   Pump(scheduler);
   ASSERT_EQ(store.readLastProfile(last), Status::kOk);
-  EXPECT_EQ(last, 31u);
+  EXPECT_EQ(last, settings.connection.ssid);
 }
 
 // A remembered profile with auto-connect disabled is not started.
@@ -755,8 +725,8 @@ TEST(StartupTest, AutoConnectOptOutIncludesOpenProfiles) {
   settings.auto_connect = false;
   CredentialUpdate update;
   update.intent = CredentialIntent::kClear;
-  ASSERT_EQ(store.saveProfile(9, settings, update), Status::kOk);
-  ASSERT_EQ(store.writeLastProfile(9), Status::kOk);
+  ASSERT_EQ(store.saveProfile(settings, update), Status::kOk);
+  ASSERT_EQ(store.writeLastProfile(settings.connection.ssid), Status::kOk);
   store.enabled = true;
 
   Controller controller(radio, store, scheduler);
@@ -771,15 +741,15 @@ TEST_F(BackendTest, SavedProfileSurvivesNativeRejection) {
   settings.connection = TestConfig();
   CredentialUpdate update;
   update.intent = CredentialIntent::kClear;
-  controller.saveProfile(1, settings, update);
+  controller.saveProfile(settings, update);
   Pump(scheduler);
   native.rejection = Status::kConnectionFailed;
-  Status request = controller.connect(1);
+  Status request = controller.connect(settings.connection.ssid);
   Pump(scheduler);
   EXPECT_EQ(request, Status::kOk);
   EXPECT_EQ(controller.state().status, Status::kConnectionFailed);
   Profile out;
-  EXPECT_EQ(controller.loadProfile(1, out), Status::kOk);
+  EXPECT_EQ(controller.loadProfile(settings.connection.ssid, out), Status::kOk);
 }
 
 // An auto-connect profile remains eligible when it is temporarily unavailable.
@@ -788,9 +758,9 @@ TEST_F(BackendTest, RetriesUnavailableSavedProfile) {
   settings.connection = TestConfig("later-open");
   CredentialUpdate update;
   update.intent = CredentialIntent::kClear;
-  ASSERT_EQ(store.saveProfile(5, settings, update), Status::kOk);
+  ASSERT_EQ(store.saveProfile(settings, update), Status::kOk);
   native.rejection = Status::kConnectionFailed;
-  ASSERT_EQ(controller.connect(5), Status::kOk);
+  ASSERT_EQ(controller.connect(settings.connection.ssid), Status::kOk);
   Pump(scheduler);
   EXPECT_EQ(native.connects, 1);
 
@@ -833,7 +803,7 @@ TEST(StoreTest, SettingsCommitVerification) {
     Status writeField(const char* key, const uint8_t* data,
                       size_t size) override {
       Status status = MemoryStore::writeField(key, data, size);
-      if (std::string(key) == "p-00000001") {
+      if (std::string(key).substr(0, 2) == "p-") {
         final_written = true;
         return Status::kStorageFailure;
       }
@@ -855,13 +825,16 @@ TEST(StoreTest, SettingsCommitVerification) {
   settings.connection = TestConfig();
   CredentialUpdate update;
   update.intent = CredentialIntent::kClear;
-  EXPECT_EQ(store.saveProfile(1, settings, update), Status::kOk);
+  EXPECT_EQ(store.saveProfile(settings, update), Status::kOk);
+  store.final_written = false;
   store.unreadable = true;
-  EXPECT_EQ(store.saveProfile(1, settings, update), Status::kCommitUnknown);
+  settings.connection.hidden = true;
+  EXPECT_EQ(store.saveProfile(settings, update), Status::kCommitUnknown);
   Profile untouched;
-  untouched.id = 99;
-  EXPECT_EQ(store.loadProfile(1, untouched), Status::kStorageFailure);
-  EXPECT_EQ(untouched.id, 99u);
+  untouched.settings.connection = TestConfig("untouched");
+  EXPECT_EQ(store.loadProfile(settings.connection.ssid, untouched),
+            Status::kStorageFailure);
+  EXPECT_EQ(untouched.settings.connection.ssid, TestConfig("untouched").ssid);
 }
 }  // namespace roo_wifi
 
@@ -880,5 +853,201 @@ TEST(OwnershipTest, FailedBeginDoesNotShutdownExistingOwner) {
   EXPECT_EQ(first.connect(TestConfig(), {}), Status::kOk);
   Pump(scheduler);
   EXPECT_EQ(native.connects, 1);
+}
+}  // namespace roo_wifi
+
+namespace roo_wifi {
+// Verifies hash keys have a stable encoding and distinguish case, length,
+// embedded zero bytes, and the maximum SSID length without truncation.
+TEST(StoreTest, ExactSsidIdentityAndStableKeys) {
+  MemoryStore store;
+  ProfileSettings settings;
+  settings.connection = TestConfig("hello");
+  CredentialUpdate update;
+  update.intent = CredentialIntent::kClear;
+  ASSERT_EQ(store.saveProfile(settings, update), Status::kOk);
+  EXPECT_EQ(store.values.count("p-pDDYRoCqvQs"), 1u);
+  std::vector<Ssid> names = {TestConfig("Hello").ssid, TestConfig("hello").ssid,
+                             TestConfig("hello!").ssid};
+  Ssid binary = TestConfig("hello").ssid;
+  binary.bytes[binary.size++] = 0;
+  names.push_back(binary);
+  Ssid longest;
+  longest.size = 32;
+  memset(longest.bytes, 0xff, 32);
+  names.push_back(longest);
+  for (const Ssid& ssid : names) {
+    settings.connection.ssid = ssid;
+    ASSERT_EQ(store.saveProfile(settings, update), Status::kOk);
+    Profile profile;
+    ASSERT_EQ(store.loadProfile(ssid, profile), Status::kOk);
+    EXPECT_EQ(profile.settings.connection.ssid, ssid);
+    ASSERT_EQ(store.writeLastProfile(ssid), Status::kOk);
+    Ssid last;
+    ASSERT_EQ(store.readLastProfile(last), Status::kOk);
+    EXPECT_EQ(last, ssid);
+  }
+  size_t count = 0;
+  EXPECT_EQ(store.forEachProfile([&](const Ssid&) {
+    ++count;
+    return true;
+  }),
+            Status::kOk);
+  EXPECT_EQ(count, names.size());
+  for (const auto& entry : store.values) {
+    if (entry.first == "last-ssid") continue;
+    EXPECT_EQ(entry.first.size(), 13u);
+  }
+  settings.connection.ssid.size = 33;
+  EXPECT_EQ(store.saveProfile(settings, update), Status::kInvalidArgument);
+  Profile profile;
+  EXPECT_EQ(store.loadProfile(settings.connection.ssid, profile),
+            Status::kInvalidArgument);
+  EXPECT_EQ(store.removeProfile(settings.connection.ssid),
+            Status::kInvalidArgument);
+  EXPECT_EQ(store.writeLastProfile(settings.connection.ssid),
+            Status::kInvalidArgument);
+  EXPECT_EQ(store.loadProfile({}, profile), Status::kInvalidArgument);
+}
+
+// Verifies colliding settings and orphaned secrets cannot be read, overwritten,
+// or deleted under another SSID. Injecting a blob at another key simulates a
+// hash collision without weakening the production hashing algorithm.
+TEST(StoreTest, CollisionGuardsAllOperations) {
+  MemoryStore source;
+  ProfileSettings settings;
+  settings.connection = TestConfig("owner");
+  settings.connection.security = AuthMode::kWpa2Personal;
+  CredentialUpdate update;
+  update.intent = CredentialIntent::kReplace;
+  update.replacement.size = 8;
+  memcpy(update.replacement.bytes, "password", 8);
+  ASSERT_EQ(source.saveProfile(settings, update), Status::kOk);
+  const auto owner = source.values;
+  settings.connection.ssid = TestConfig("other").ssid;
+  MemoryStore target;
+  ASSERT_EQ(target.saveProfile(settings, update), Status::kOk);
+  const auto target_keys = target.values;
+  for (bool orphan : {false, true}) {
+    target.values.clear();
+    for (const auto& entry : target_keys) {
+      if (orphan && entry.first[0] == 'p') continue;
+      for (const auto& stored : owner) {
+        if (stored.first[0] == entry.first[0]) {
+          target.values[entry.first] = stored.second;
+        }
+      }
+    }
+    const auto before = target.values;
+    const int writes = target.writes;
+    Profile profile;
+    profile.settings.connection = TestConfig("untouched");
+    Credentials secret;
+    secret.size = 1;
+    EXPECT_EQ(target.loadProfile(settings.connection.ssid, profile),
+              orphan ? Status::kNotFound : Status::kHashCollision);
+    EXPECT_EQ(profile.settings.connection.ssid, TestConfig("untouched").ssid);
+    EXPECT_EQ(target.loadCredentials(settings.connection.ssid, secret),
+              orphan ? Status::kNotFound : Status::kHashCollision);
+    EXPECT_EQ(secret.size, 1u);
+    for (CredentialIntent intent :
+         {CredentialIntent::kReplace, CredentialIntent::kKeep,
+          CredentialIntent::kClear}) {
+      update.intent = intent;
+      EXPECT_EQ(target.saveProfile(settings, update), Status::kHashCollision);
+    }
+    EXPECT_EQ(target.removeProfile(settings.connection.ssid),
+              Status::kHashCollision);
+    EXPECT_EQ(target.values, before);
+    EXPECT_EQ(target.writes, writes);
+  }
+  // A matching settings record must not authorize a mismatched secret.
+  target.values = target_keys;
+  for (const auto& entry : target_keys) {
+    if (entry.first[0] != 's') continue;
+    for (const auto& stored : owner) {
+      if (stored.first[0] == 's') target.values[entry.first] = stored.second;
+    }
+  }
+  Credentials secret;
+  EXPECT_EQ(target.loadCredentials(settings.connection.ssid, secret),
+            Status::kHashCollision);
+}
+}  // namespace roo_wifi
+
+namespace roo_wifi {
+// Verifies maximum-size secrets and SSIDs fit the field buffers, and an
+// interrupted delete can clean up the remaining owned secret on retry.
+TEST(StoreTest, MaximumBlobsAndPartialDelete) {
+  MemoryStore store;
+  ProfileSettings settings;
+  settings.connection = TestConfig("12345678901234567890123456789012");
+  settings.connection.security = AuthMode::kWpa2Personal;
+  CredentialUpdate update;
+  update.intent = CredentialIntent::kReplace;
+  update.replacement.encoding = CredentialEncoding::kRawPsk;
+  update.replacement.size = 64;
+  memset(update.replacement.bytes, 'a', 64);
+  ASSERT_EQ(store.saveProfile(settings, update), Status::kOk);
+  ASSERT_EQ(store.values.size(), 2u);
+  for (const auto& entry : store.values) {
+    EXPECT_EQ(entry.second.size(), entry.first[0] == 'p' ? 61u : 104u);
+  }
+  Credentials secret;
+  ASSERT_EQ(store.loadCredentials(settings.connection.ssid, secret),
+            Status::kOk);
+  EXPECT_EQ(secret.size, 64u);
+  EXPECT_EQ(memcmp(secret.bytes, update.replacement.bytes, 64), 0);
+  store.fail_at = store.writes + 2;
+  EXPECT_EQ(store.removeProfile(settings.connection.ssid),
+            Status::kStorageFailure);
+  ASSERT_EQ(store.values.size(), 1u);
+  EXPECT_EQ(store.values.begin()->first[0], 's');
+  EXPECT_EQ(store.removeProfile(settings.connection.ssid), Status::kOk);
+  EXPECT_TRUE(store.values.empty());
+}
+
+// Verifies the last selection rejects malformed lengths without changing the
+// caller's output, and legacy ID selections are ignored.
+TEST(StoreTest, LastSsidValidationAndLegacySelection) {
+  MemoryStore store;
+  store.values["last"] = {0, 0, 0, 7};
+  Ssid out = TestConfig("unchanged").ssid;
+  EXPECT_EQ(store.readLastProfile(out), Status::kNotFound);
+  for (const auto& bytes : std::vector<std::vector<uint8_t>>{
+           {}, {0}, {2, 'a'}, {1, 'a', 'b'}, {33}}) {
+    store.values["last-ssid"] = bytes;
+    EXPECT_EQ(store.readLastProfile(out), Status::kCorrupt);
+    EXPECT_EQ(out, TestConfig("unchanged").ssid);
+  }
+  EXPECT_EQ(store.writeLastProfile({}), Status::kOk);
+  EXPECT_EQ(store.readLastProfile(out), Status::kNotFound);
+}
+}  // namespace roo_wifi
+
+namespace roo_wifi {
+// Verifies enumeration preserves const visitors and invokes mutable visitors
+// without copying their state or removing their const qualification.
+TEST(StoreTest, EnumerationPreservesVisitorQualification) {
+  MemoryStore store;
+  ProfileSettings settings;
+  settings.connection = TestConfig("callback");
+  CredentialUpdate update;
+  update.intent = CredentialIntent::kClear;
+  ASSERT_EQ(store.saveProfile(settings, update), Status::kOk);
+  int visits = 0;
+  const auto immutable = [&visits](const Ssid&) {
+    ++visits;
+    return true;
+  };
+  EXPECT_EQ(store.forEachProfile(immutable), Status::kOk);
+  auto mutable_visitor = [count = 0, &visits](const Ssid&) mutable {
+    visits = ++count;
+    return true;
+  };
+  EXPECT_EQ(store.forEachProfile(mutable_visitor), Status::kOk);
+  EXPECT_EQ(visits, 1);
+  EXPECT_EQ(store.forEachProfile(mutable_visitor), Status::kOk);
+  EXPECT_EQ(visits, 2);
 }
 }  // namespace roo_wifi

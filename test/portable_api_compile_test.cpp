@@ -20,7 +20,7 @@ static_assert(
                  roo_wifi::Status>::value,
     "cancelScan is scan-specific");
 static_assert(std::is_same<decltype(std::declval<roo_wifi::Controller&>()
-                                        .removeProfile(1)),
+                                        .removeProfile(roo_wifi::Ssid{})),
                            roo_wifi::Status>::value,
               "writes return their outcome");
 

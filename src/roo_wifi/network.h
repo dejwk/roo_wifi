@@ -1,5 +1,6 @@
 #pragma once
 #include <stdint.h>
+#include <string.h>
 
 namespace roo_wifi {
 
@@ -10,6 +11,15 @@ struct Ssid {
 
   /// Number of meaningful bytes in @p bytes.
   uint8_t size = 0;
+
+  /// Compares the exact length-delimited bytes; invalid lengths never match.
+  bool operator==(const Ssid& other) const {
+    return size <= sizeof(bytes) && size == other.size &&
+           memcmp(bytes, other.bytes, size) == 0;
+  }
+
+  /// Tests whether two SSIDs differ.
+  bool operator!=(const Ssid& other) const { return !(*this == other); }
 };
 
 /// Holds a six-byte IEEE 802 MAC address in network byte order.

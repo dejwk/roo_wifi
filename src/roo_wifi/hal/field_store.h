@@ -8,31 +8,30 @@ namespace roo_wifi {
 class FieldStore : public Store {
  public:
   /// Loads profile metadata and credential presence from persisted blobs.
-  /// @param id Nonzero profile key to load.
+  /// @param ssid Exact SSID of the saved configuration.
   /// @param out Receives metadata on success and is unchanged on failure.
-  Status loadProfile(ProfileId id, Profile &out) const override;
+  Status loadProfile(const Ssid &ssid, Profile &out) const override;
 
   /// Loads credentials from a profile's separate secret blob.
-  /// @param id Nonzero profile key to load.
+  /// @param ssid Exact SSID of the saved configuration.
   /// @param out Receives credentials on success and is unchanged on failure.
-  Status loadCredentials(ProfileId id, Credentials &out) const override;
+  Status loadCredentials(const Ssid &ssid, Credentials &out) const override;
 
   /// Serializes settings and applies the requested secret update.
-  /// @param id Nonzero profile key to save.
   /// @param settings Non-secret settings to persist.
   /// @param credential Credential action and replacement material.
-  Status saveProfile(ProfileId id, const ProfileSettings &settings,
+  Status saveProfile(const ProfileSettings &settings,
                      const CredentialUpdate &credential) override;
 
   /// Removes a profile's settings and secret blobs.
-  /// @param id Nonzero profile key to remove.
-  Status removeProfile(ProfileId id) override;
+  /// @param ssid Exact SSID of the saved configuration.
+  Status removeProfile(const Ssid &ssid) override;
 
-  /// Loads the persisted last-successful profile ID.
-  Status readLastProfile(ProfileId &out) const override;
+  /// Loads the persisted last-successful profile SSID.
+  Status readLastProfile(Ssid &out) const override;
 
-  /// Persists or clears the last-successful profile ID.
-  Status writeLastProfile(ProfileId id) override;
+  /// Persists or clears the last-successful profile SSID.
+  Status writeLastProfile(const Ssid &ssid) override;
 
  protected:
   /// Callback used internally to enumerate persisted field keys.
@@ -61,11 +60,26 @@ class FieldStore : public Store {
   virtual Status enumerateFields(FieldVisitor visitor, void *context) const = 0;
 
  private:
+  /// Writes changed bytes and rereads failures to resolve the commit outcome.
+  /// @param capacity Maximum size of the existing value, bounded by the largest
+  /// supported blob; a mismatch still permits replacement after identity
+  /// checks.
+  Status writeVerified(const char *key, const uint8_t *expected,
+                       size_t expected_size, size_t capacity);
+
+  /// Decodes and visits one canonical profile key, checking its SSID hash.
+  Status visitProfile(const char *key, size_t size, ProfileVisitor visitor,
+                      void *context) const;
+
+  /// Verifies ownership of all existing blobs before changing either.
+  Status checkIdentity(const Ssid &ssid) const;
+
+  /// Visits decoded SSIDs and propagates enumeration or corruption failures.
   Status enumerateProfiles(ProfileVisitor visitor,
                            void *context) const override;
 
   /// Reads and validates the settings and corresponding secret.
-  Status read(ProfileId id, ProfileSettings &settings,
+  Status read(const Ssid &ssid, ProfileSettings &settings,
               Credentials &secret) const;
 };
 }  // namespace roo_wifi

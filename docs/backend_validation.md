@@ -59,14 +59,14 @@ bazel build //:roo_windows_wifi //examples/simple:simple \
   restoration, rejects zero/broadcast address readiness, rejects competing station
   owners, and enumerates/reloads compact profile values through the actual
   preferences adapter.
-- The migrated UI model saves before connecting, reserves a caller-known key,
+- The migrated UI model saves before connecting, addresses saved configurations by SSID,
   and refuses ambiguous SSID-only security selection. The backend itself can
   connect to an explicitly requested security mode among same-SSID APs.
 
 ## Memory measurements
 
 Linux x86-64 Arduino emulation, current state-machine resource test. ScanRecord
-is 50 bytes; Controller is 1416 bytes; OrderedInterface is 2176 bytes (including
+is 44 bytes; Controller is 1480 bytes; OrderedInterface is 1528 bytes (including
 its fixed event handoff).
 Heap counters include scheduler allocation, the fake native scan vector,
 controller records and one fake stored profile. They exclude stack objects,
@@ -74,10 +74,10 @@ allocator bookkeeping and hardware/SDK allocations.
 
 | AP limit | Retained heap bytes | Peak heap bytes |
 | ---: | ---: | ---: |
-| 0 | 917 | 917 |
-| 20 | 2917 | 2917 |
-| 40 | 4917 | 4917 |
-| 100 | 10917 | 10917 |
+| 0 | 911 | 911 |
+| 20 | 2671 | 2671 |
+| 40 | 4431 | 4431 |
+| 100 | 9711 | 9711 |
 
 After warm-up, 200 more scan/cancel/profile-load cycles retain the same allocation
 count. Snapshot, link, support and activity observation allocate nothing. These

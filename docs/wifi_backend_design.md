@@ -1,4 +1,10 @@
 > The operation-slot API described in this original design has been superseded
+
+> The SSID persistence contract below supersedes the original numeric profile-ID
+> proposal. Historical API sketches and implementation stages later in this
+> document describe the original rollout; see [backend migration](backend_migration.md)
+> and the public headers for the current API.
+
 > by the implemented desired-state controller. See [current API migration](backend_migration.md)
 > and [Controller declarations](../src/roo_wifi/controller.h) for station intent,
 > coalesced notifications, scan-specific cancellation, and synchronous writes.
@@ -91,14 +97,14 @@ flash-backed, or application-supplied store.
 | --- | --- |
 | AP record / scan snapshot | Controller-owned scan data; consumers borrow it until the documented snapshot mutation. A BSSID identifies an AP, not a saved profile. |
 | Connection configuration | Caller-owned input copied as needed on admission; describes a connection independently of persistence. |
-| Profile / profile ID | Application-assigned lookup key for durable configuration; known without a scan or store listing. |
+| Profile / SSID | One durable configuration per exact SSID; addressable without a scan or store listing. |
 | Operation ID / result | Correlates one admitted command and its terminal result; a connection identity remains useful for subsequent link events. |
 | Backend support | Reports real radio/store operations and diagnostics, independent of what any caller chooses to expose. |
 
 These concepts separate observation, execution, and persistence: scan indices
-cannot become profile IDs; saving is not connecting; association is not address
+cannot become saved-network identities; saving is not connecting; association is not address
 readiness or internet availability. A provisioning service can save configuration,
-save under a known profile key, then request a connection by that key. A temporary diagnostic tool
+save settings under their SSID, then request a connection by that SSID. A temporary diagnostic tool
 can connect to explicit configuration without writing credentials to flash.
 
 The dependency direction is application -> controller -> portable Interface/Store
@@ -151,7 +157,7 @@ execution path. Do not introduce `NetworkSummary`, `ConfigurationDetails`, `can_
 | Scan result | AP information: SSID, BSSID, full `AuthMode`, RSSI, channel, and available radio metadata. Each result describes an AP; grouping and presentation order are consumer choices. |
 | Scan snapshot | Results of one scan, with documented lifetime and completion/failure notification. Indices are valid only within that snapshot; they are not persistent network identities. |
 | Connection state | Selected connection parameters, association/address-acquisition state, typed failure information, and available effective link diagnostics. No labels, badges, internet claims, or allowed UI actions. |
-| Saved profile and `ProfileId` | Persistent connection configuration and credential reference, addressed by an application-assigned key across restart. There is no required collection or generated identity service. |
+| Saved profile and `Ssid` | Persistent connection configuration and credential reference, addressed by exact SSID bytes across restart. |
 | Connection configuration | SSID/security requirements, explicit credential intent, hidden-network handling, auto-connect policy, DHCP/static IPv4, and supported station MAC policy. No form text, proxy policy, or metered treatment. |
 | Backend support | Supported authentication/configuration operations and available diagnostics from the selected HAL/store. It does not describe whether a settings control is visible or editable. |
 | Request/result | Admission, operation identity, completion, and errors for backend work. Results refer to the operation and, when relevant, its profile/connection target, never a UI row handle. |
@@ -165,8 +171,8 @@ Backend operations cover:
 
 - enabling/disabling the interface and requesting scans,
 - observing current connection and scan state,
-- enumerating profile keys and loading, saving, and deleting profiles,
-- connecting using a saved profile ID or explicit connection configuration,
+- enumerating saved SSIDs and loading, saving, and deleting profiles,
+- connecting using a saved SSID or explicit connection configuration,
 - disconnecting, cancelling supported operations, and reporting outcomes,
 - validating and applying supported Wi-Fi/IP settings.
 
@@ -178,7 +184,7 @@ connect without saving a profile. Saving works with the radio disabled;
 connecting while disabled reports an explicit error.
 
 For example, a headless provisioning service saves an SSID/security/IP profile,
-uses its known key to request a connection. The Wi-Fi UI
+uses its SSID to request a connection. The Wi-Fi UI
 uses the same operations and translates their results into inline feedback.
 Neither caller needs a display summary, scan-row handle, or activity state in
 the backend.
@@ -209,11 +215,10 @@ HAL acceptance must not be presented as confirmed physical completion.
 
 #### Persistence and Platform Work in `roo_wifi`
 
-`Store` provides allocation-free enumeration and direct access by profile key.
-It does not allocate profile IDs or maintain a separate catalog. An application
-can use a single fixed key for its provisioned network or enumerate multiple
-configurations. Enumeration reports persisted profile IDs in unspecified order;
-the consumer loads metadata for the IDs it needs and derives its own presentation.
+`Store` provides allocation-free enumeration and direct access by SSID.
+It maintains one configuration per SSID without a separate catalog. Enumeration
+reports persisted SSIDs in unspecified order; the consumer loads the metadata
+it needs and derives its own presentation.
 
 Extend `Interface` and the ESP32 implementation to apply authentication,
 hidden-network, DHCP/static IPv4 (address, prefix, gateway, primary and optional
@@ -232,51 +237,43 @@ confirms the replacement did not commit. It must never expose partial data.
 Connection failure does not implicitly delete saved settings. Unsupported
 non-default configuration is rejected rather than dropped.
 
-### Versioned Profile Blobs and Known Keys
+### Versioned Profile Blobs and SSID Keys
 
-Use `roo_prefs` as a small-value store, without building a profile database on
-top of it. `ProfileId` is a nonzero application-assigned 32-bit key; saving that
-key creates or replaces its configuration. Zero means no profile. The application
-owns key selection and reuse; deleting and recreating a key intentionally refers
-to the same application location, not a new generated identity.
+There is one durable configuration per exact SSID. Public lookup, connection,
+and deletion take `Ssid`; save derives the identity from its settings. Consumers
+never allocate profile IDs. An empty SSID denotes no saved selection in state.
+Security remains an enforced configuration policy; matching the name alone
+never authorizes an authentication downgrade.
 
-The preferences adapter stores settings and credentials separately. Their keys
-are `p-XXXXXXXX` and `s-XXXXXXXX`, where `XXXXXXXX` is the lowercase hexadecimal
-profile ID. Both values have a magic number and format version. The settings
-value contains the length-delimited SSID plus fixed-width enums, booleans, and
-IPv4 fields; the secret value contains its encoding and length-delimited bytes.
-The largest settings and secret values are 61 and 71 bytes. There are no slot
-limits, catalogs, bank buffers, revision counters, status markers, or index
-writes. Enumeration recognizes only `p-` keys, so orphaned secret values are
-not exposed as profiles.
+The preferences adapter computes 64-bit FNV-1a over exactly the SSID bytes,
+using offset basis 14695981039346656037 and prime 1099511628211, with arithmetic
+modulo 2^64. The hash's eight bytes in network order are encoded as unpadded
+Base64url. The 11-character suffix plus `p-` or `s-` produces a 13-character key.
+No platform-dependent hash or generated identity is used.
 
-A save loads the old credential only when Keep is requested, validates all
-input, and uses bounded local marshalling. Values are compared before writing,
-so a credential-only replacement does not rewrite unchanged settings. A failed
-write is reread: an exact match confirms success, a confirmed old or missing
-value reports StorageFailure, and an unreadable result reports CommitUnknown.
-Reads reject bad magic, unsupported versions, truncation, trailing bytes,
-invalid lengths and invalid domain values as Corrupt. Deletion erases settings
-first, then the secret; a failed cleanup can be retried.
+Version-2 settings and secret values both retain the length-delimited SSID.
+Their maximum sizes are 61 and 104 bytes. Reads verify identity before returning
+credentials; save and delete verify both existing records before any mutation,
+including orphaned secrets. A mismatch returns `kHashCollision`. A corrupt or
+unreadable record prevents mutation. No collision-resolution catalog is needed.
 
-Radio enablement remains a separate boolean. A successful connection through a
-saved profile persists that profile ID as the last successful selection. On
-startup or radio re-enable, the controller loads that profile and reconnects
-only when its auto-connect setting is true. This policy is independent of
-whether the profile is open or credential-protected. Temporary connections do
-not replace the saved selection. Missing/corrupt selection data produces an
-explicit failure and does not trigger a search through saved profiles.
+Settings and secrets remain separately committed. Writes compare existing
+bytes before committing, and failed writes are reread to distinguish confirmed
+success, storage failure, and unknown commit outcome. Delete removes settings
+before secrets and supports retry after partial cleanup.
 
-#### Profile Discovery
+Enumeration recognizes canonical `p-` keys, decodes settings to recover the
+SSID, and verifies its hash against the key. Corrupt settings stop enumeration
+with `kCorrupt`; credentials are validated by a subsequent load. Callback SSID
+references live only for the callback. No retained catalog is allocated.
 
-Profile enumeration considers only the versioned `p-XXXXXXXX` key format.
-Unsupported preference layouts are ignored rather than migrated. A consumer can therefore implement
-a saved-networks page without maintaining a second catalog. Neither scanning nor
-loading one profile implicitly builds or retains a complete saved list.
-Enumeration discovers persisted IDs; it does not validate blob contents.
-If a record is later corrupted, its ID is still visited and
-`loadProfile()` reports the read failure independently. Enumeration order is
-unspecified, and visitor-requested early termination returns `kStopped`.
+The last successful SSID is stored as a length byte and SSID bytes under
+`last-ssid`. Startup and re-enable restore it only when auto-connect is enabled.
+Temporary connections do not replace it. Radio enablement is a separate value.
+
+Legacy numeric-ID records and `last` are ignored rather than migrated. Users
+must save their networks again. Renaming creates another entry and requires
+credentials for that entry; deleting the old entry is explicit.
 
 ### HAL Evolution and Native Event Correlation
 

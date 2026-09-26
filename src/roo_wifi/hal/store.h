@@ -11,7 +11,7 @@ namespace roo_wifi {
 class Store {
  public:
   /// Callback used internally by allocation-free profile enumeration.
-  using ProfileVisitor = bool (*)(void *context, ProfileId id);
+  using ProfileVisitor = bool (*)(void *context, const Ssid &ssid);
 
   /// Destroys the persistence adapter after its controller.
   virtual ~Store() = default;
@@ -20,50 +20,58 @@ class Store {
   virtual Status begin() = 0;
 
   /// Loads non-secret profile settings without exposing credentials.
-  /// @param id Nonzero application-assigned profile key.
+  /// @param ssid Exact SSID of the saved configuration, with 1–32 bytes.
   /// @param out Receives the profile on success and is unchanged on failure.
-  virtual Status loadProfile(ProfileId id, Profile &out) const = 0;
+  virtual Status loadProfile(const Ssid &ssid, Profile &out) const = 0;
 
-  /// Calls `visitor` once for every persisted saved-profile ID.
+  /// Calls `visitor` once for every persisted saved-profile SSID.
   ///
   /// The order is unspecified. Return false to stop early, in which case this
-  /// returns Status::kStopped. A profile whose data was later corrupted is
-  /// still visited;
-  /// loadProfile() reports that read failure independently. Do not modify this
-  /// store while it is being enumerated.
+  /// returns Status::kStopped. Corrupt settings that cannot supply a trusted
+  /// SSID stop enumeration with kCorrupt; credential errors are reported by
+  /// loadProfile(). The SSID reference is borrowed for the callback only.
+  /// Do not modify this store while it is being enumerated.
   template <typename Visitor>
   Status forEachProfile(Visitor &&visitor) const {
     using VisitorType = typename std::remove_reference<Visitor>::type;
+    // The erased context is mutable; the callback keeps the visitor's cv type.
+    struct Context {
+      VisitorType *visitor;
+    } context{std::addressof(visitor)};
     return enumerateProfiles(
-        [](void *context, ProfileId id) {
-          return static_cast<bool>((*static_cast<VisitorType *>(context))(id));
+        [](void *opaque, const Ssid &ssid) {
+          Context &context = *static_cast<Context *>(opaque);
+          return static_cast<bool>((*context.visitor)(ssid));
         },
-        const_cast<void *>(static_cast<const void *>(std::addressof(visitor))));
+        &context);
   }
 
   /// Loads credentials for constructing an admitted connection attempt.
-  /// @param id Nonzero application-assigned profile key.
+  /// @param ssid Exact SSID of the saved configuration, with 1–32 bytes.
   /// @param out Receives credentials on success and is unchanged on failure.
-  virtual Status loadCredentials(ProfileId id, Credentials &out) const = 0;
+  virtual Status loadCredentials(const Ssid &ssid, Credentials &out) const = 0;
 
-  /// Creates or replaces a profile and applies its credential update.
-  /// @param id Nonzero profile key to save.
+  /// Creates or replaces the configuration for settings.connection.ssid.
+  /// Applies the credential update; a different SSID creates a separate entry.
+  /// Hash-based stores must reject conflicting SSIDs with kHashCollision before
+  /// changing settings or credentials. Other failures can represent partial
+  /// writes.
   /// @param settings Non-secret settings to persist.
   /// @param credential Requested credential action and replacement material.
-  virtual Status saveProfile(ProfileId id, const ProfileSettings &settings,
+  virtual Status saveProfile(const ProfileSettings &settings,
                              const CredentialUpdate &credential) = 0;
 
   /// Removes a profile without disconnecting an active link that used it.
-  /// @param id Nonzero profile key to remove.
-  virtual Status removeProfile(ProfileId id) = 0;
+  /// @param ssid Exact SSID of the saved configuration, with 1–32 bytes.
+  virtual Status removeProfile(const Ssid &ssid) = 0;
 
   /// Reads the last successfully connected saved profile.
-  /// @param out Receives a nonzero profile ID on success.
-  virtual Status readLastProfile(ProfileId &out) const = 0;
+  /// @param out Receives a nonempty SSID on success.
+  virtual Status readLastProfile(Ssid &out) const = 0;
 
   /// Persists the last successfully connected saved profile.
-  /// @param id Nonzero profile ID, or zero to clear the selection.
-  virtual Status writeLastProfile(ProfileId id) = 0;
+  /// @param ssid Nonempty SSID, or an empty SSID to clear the selection.
+  virtual Status writeLastProfile(const Ssid &ssid) = 0;
 
   /// Reads persisted radio enablement.
   /// @param out Receives the stored value on success.

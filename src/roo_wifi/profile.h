@@ -5,9 +5,6 @@
 
 namespace roo_wifi {
 
-/// Application-assigned key for a saved profile; zero means no profile.
-using ProfileId = uint32_t;
-
 /// Selects whether a profile keeps, replaces, or clears its credentials.
 enum class CredentialIntent : uint8_t { kKeep, kReplace, kClear };
 
@@ -20,7 +17,7 @@ struct CredentialUpdate {
   Credentials replacement;
 };
 
-/// Contains persisted non-secret settings for one saved profile.
+/// Contains persisted non-secret settings, addressed by connection.ssid.
 struct ProfileSettings {
   /// Connection settings to persist.
   ConnectionConfig connection;
@@ -32,9 +29,6 @@ struct ProfileSettings {
 
 /// Describes one saved profile without exposing its credentials.
 struct Profile {
-  /// Application-assigned nonzero profile key.
-  ProfileId id = 0;
-
   /// Persisted non-secret settings.
   ProfileSettings settings;
 

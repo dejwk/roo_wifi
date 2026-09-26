@@ -71,11 +71,13 @@ class Controller : private Interface::Sink {
     /// Observed association, addresses, and native diagnostics.
     LinkState link;
 
-    /// Saved profile selected by the current intent, or zero for a direct call.
-    ProfileId desired_profile = 0;
+    /// Saved profile selected by the current intent, or an empty SSID for a
+    /// direct call.
+    Ssid desired_profile;
 
-    /// Saved profile that reached address readiness, or zero otherwise.
-    ProfileId connected_profile = 0;
+    /// Saved profile that reached address readiness, or an empty SSID
+    /// otherwise.
+    Ssid connected_profile;
 
     /// Revision identifying the accepted station intent.
     /// Increments when that intent is replaced or explicitly retried.
@@ -243,16 +245,18 @@ class Controller : private Interface::Sink {
   /// means no scan has succeeded, whereas count == 0 can be a valid result.
   ScanSnapshot scanSnapshot() const { return snapshot_; }
 
-  /// Loads the saved profile identified by @p id.
+  /// Loads the saved profile identified by @p ssid.
   /// Returns non-secret settings and credential presence.
-  /// @param id Nonzero application-assigned profile key.
+  /// @param ssid Exact SSID of the saved configuration, with 1–32 bytes.
   /// @param out Receives the profile on success and is unchanged on failure.
-  Status loadProfile(ProfileId id, Profile& out) const;
+  Status loadProfile(const Ssid& ssid, Profile& out) const;
 
-  /// Visits each saved profile ID in unspecified order. False stops enumeration
-  /// with kStopped. Reads are allowed in the visitor; writes are not. Corrupted
-  /// profiles remain enumerable, and loadProfile reports their errors.
-  /// @param visitor Callable receiving a ProfileId and returning true to
+  /// Visits each saved profile SSID in unspecified order. False stops
+  /// enumeration with kStopped. Reads are allowed in the visitor; writes are
+  /// not. Corrupted settings can stop enumeration with kCorrupt. Credential
+  /// errors are reported by loadProfile(). SSID references are borrowed during
+  /// callbacks.
+  /// @param visitor Callable receiving a Ssid and returning true to
   /// continue or false to stop. Called synchronously on the caller's context.
   /// @return kOk after visiting all IDs, kStopped on early termination,
   /// kNotStarted before begin()/after shutdown(), or a storage error.
@@ -286,14 +290,14 @@ class Controller : private Interface::Sink {
   Status connect(const ConnectionConfig& config,
                  const Credentials& credentials);
 
-  /// Requests a connection using the saved profile identified by @p id.
+  /// Requests a connection using the saved profile identified by @p ssid.
   /// Loads and copies the profile at admission. Later profile edits do not
   /// change the accepted attempt. Its auto_connect flag controls retries.
-  /// @param id Nonzero key of the profile to load, including its credentials.
+  /// @param ssid SSID of the configuration to load, including its credentials.
   /// @return kOk when intent is accepted, a storage error if the profile
   /// cannot be loaded, or the same admission/validation errors as direct
   /// connect(). Completion is reported through station-state notifications.
-  Status connect(ProfileId id);
+  Status connect(const Ssid& ssid);
 
   /// Requests disconnection from the network or cancellation of connection.
   /// Updates intent to idle and suppresses automatic reconnect until another
@@ -324,25 +328,26 @@ class Controller : private Interface::Sink {
   /// when not running, or the adapter's cancellation error.
   Status cancelScan();
 
-  /// Creates or updates profile @p id with @p settings and @p credentials.
+  /// Creates or updates the profile for settings.connection.ssid.
+  /// One configuration is stored per exact SSID; security remains enforced.
   /// Saves synchronously and returns the storage outcome; never cancellable.
   /// Invalidates profile state asynchronously, including partial failures.
-  /// @param id Nonzero application-assigned profile key.
   /// @param settings Non-secret profile settings to persist.
   /// @param credentials Explicit credential action and replacement material.
   /// @return The completed storage outcome. A failure can represent a partial
   /// write; reload the profile after onProfilesChanged() rather than assuming
-  /// the old contents survived unchanged.
-  Status saveProfile(ProfileId id, const ProfileSettings& settings,
+  /// the old contents survived unchanged. kHashCollision leaves stored records
+  /// unchanged because their hash belongs to another SSID.
+  Status saveProfile(const ProfileSettings& settings,
                      const CredentialUpdate& credentials);
 
-  /// Removes the saved profile identified by @p id.
+  /// Removes the saved profile identified by @p ssid.
   /// Deletes synchronously without disconnecting a link using that profile.
   /// Returns the storage outcome and invalidates profile state asynchronously.
-  /// @param id Nonzero key of the profile to remove.
+  /// @param ssid Exact SSID of the saved configuration, with 1–32 bytes.
   /// @return The completed storage outcome, or an argument/lifecycle error.
   /// A failed delete may be partial; reload after onProfilesChanged().
-  Status removeProfile(ProfileId id);
+  Status removeProfile(const Ssid& ssid);
 
  private:
   enum class Change : uint8_t { kStation = 1, kScan = 2, kProfiles = 4 };
@@ -381,7 +386,7 @@ class Controller : private Interface::Sink {
 
   /// Validates and replaces connection intent with an owned input snapshot.
   Status requestConnection(const ConnectionConfig& config,
-                           const Credentials& credentials, ProfileId profile,
+                           const Credentials& credentials, const Ssid& profile,
                            bool automatic);
 
   /// Retires one internal native transition and schedules reconciliation.

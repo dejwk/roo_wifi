@@ -75,23 +75,19 @@ presentation/grouping is independent of these records.
 For provisioning, create `ProfileSettings` with an explicit SSID byte length and
 security mode, and a `CredentialUpdate`. Open profiles require Clear; secured
 new profiles require Replace; Keep requires a complete existing profile.
-`saveProfile(known_key, settings, update)` and `removeProfile(key)` are synchronous
-and return the storage result directly. They are not cancellable. Call
-`connect(known_key)` after a successful save when connection is desired. Storage
-work can block the scheduler; deferring that same work would not make it nonblocking.
-The radio may be off while saving. A subsequent Disabled or connection failure
-does not undo persistence. `forEachProfile()` discovers persisted profile keys
-without a separate catalog; profile identity remains application-assigned.
-Enumeration order is unspecified, visitor-requested early termination returns
-`kStopped`, and metadata corruption is reported by `loadProfile()` independently
-of discovery of the persisted key.
+`saveProfile(settings, update)` and `removeProfile(ssid)` are synchronous and
+return storage outcomes. Saving the same SSID updates its existing configuration.
+`connect(ssid)` loads settings and credentials at admission. Later edits do not
+change the admitted attempt. Removing a saved entry does not disconnect it.
+`forEachProfile()` visits borrowed `const Ssid&` values in unspecified order.
+Corrupt settings stop enumeration with `kCorrupt`; credential corruption is
+reported by `loadProfile(ssid, out)`. Enumeration is available while radio is off.
 
-`connect(config, credentials)` makes a temporary connection without writing
-credentials. `connect(key)` copies the saved input before returning, so later
-profile edits cannot change an admitted attempt. `removeProfile(key)` does not
-disconnect. `disconnect()` can interrupt a connection before association or
-while waiting for an IP address. Native teardown completes asynchronously. If
-cancellation cannot settle within `transition_timeout_ms`, station state becomes
+The old `ProfileId` API has been removed. Callers no longer allocate keys or
+maintain a mapping between SSIDs and IDs. Empty SSIDs represent no saved profile
+in controller state and clear the last selection in the store. Other profile
+operations require 1–32 bytes. Security policies remain independent of identity.
+
 Faulted and new radio requests fail; profile operations remain available.
 Explicit disconnect suppresses automatic reconnect until another
 explicit connect or enable cycle. A successful saved-profile connection becomes
@@ -100,19 +96,15 @@ connect only when its `auto_connect` setting is true. Open profiles follow the
 same policy as credential-protected profiles; temporary connections are not
 remembered.
 
-Each profile uses a versioned settings value and a separate versioned secret
-value. Credential-only replacement does not rewrite unchanged settings.
-`CommitUnknown` requires rereading before assuming success. Failed deletion can
-be retried.
+Each profile uses version-2 settings and secret blobs under `p-` and `s-` keys.
+The suffix is the unpadded Base64url encoding of a 64-bit FNV-1a SSID hash in
+network byte order (13 characters including the prefix). Both values contain
+the full SSID; mismatches return `kHashCollision` before any mutation. Orphaned
+secrets are checked before save and delete too. The last successful SSID is
+stored under `last-ssid` as its length byte followed by its bytes.
+Legacy numeric-ID records are ignored, including their last-selection value;
+networks need to be saved again. The radio-enabled preference is retained.
 
-The existing `roo_windows_wifi::Configurator` takes the new Controller and an
-optional caller-known profile key (default 1). It stores one provisioned profile
-at that key, keeps its own display model, and no longer reads secrets for display.
-Its example uses one caller-known profile key. UI-owned SSID-only selection
-rejects ambiguity; explicit-security backend selection
-remains supported. Applications needing multiple remembered configurations can
-enumerate their assigned keys and load the corresponding non-secret metadata.
-
-See [validation and release status](backend_validation.md) for capabilities,
-measured resource bounds and physical-device acceptance still required before
-publishing the prepared 2.0.0 release.
+`roo_windows_wifi::Configurator` now takes the controller without a profile key.
+`WifiSettingsFlow(context, controller, policies)` optionally borrows an
+application policy provider addressed by SSID. The ID allocator has been removed.

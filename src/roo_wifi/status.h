@@ -19,7 +19,9 @@ enum class Status : uint8_t {
   kCommitUnknown,
   kCorrupt,
   /// Enumeration stopped because its visitor requested it.
-  kStopped
+  kStopped,
+  /// A storage hash belongs to a different SSID; no mutation was attempted.
+  kHashCollision
 };
 
 }  // namespace roo_wifi

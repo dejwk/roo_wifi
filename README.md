@@ -81,7 +81,7 @@ state observation, persistence, and timeout details.
 
 For a protected network, populate `roo_wifi::Credentials` and pass it instead
 of `{}`. For a connection that should be remembered, save a profile with
-`saveProfile()` and connect using its profile ID.
+`saveProfile()` and connect using its SSID.
 
 ## Custom persistence
 
@@ -117,12 +117,27 @@ results, or profiles explicitly. The runnable scan
 examples show how to enable the station and request a scan once the preceding
 enable operation has completed.
 
+There is one saved configuration per exact SSID (bytes and length, case-sensitive).
+`saveProfile(settings, update)` creates or replaces the entry identified by
+`settings.connection.ssid`. `loadProfile(ssid, out)`, `connect(ssid)`, and
+`removeProfile(ssid)` use that same identity. Security remains a stored,
+enforced policy. Changing the SSID creates another entry; remove the old entry
+explicitly if it is no longer needed.
+
+The store hashes SSID bytes with 64-bit FNV-1a and encodes the hash in network
+byte order as unpadded Base64url. Keys are `p-` or `s-` plus 11 characters.
+Both blobs retain the full SSID. A conflicting stored SSID returns
+`kHashCollision` without exposing credentials or mutating records; there is no
+collision-resolution catalog. Hashing is an addressing mechanism, not encryption.
+Legacy numeric-ID records and their last-selection value are ignored. Re-save
+networks after upgrading; there is no automatic migration.
+
 Saved profiles can be discovered without a separate application catalog:
 
 ```cpp
-wifi.forEachProfile([&](roo_wifi::ProfileId id) {
+wifi.forEachProfile([&](const roo_wifi::Ssid& ssid) {
   roo_wifi::Profile profile;
-  if (wifi.loadProfile(id, profile) == roo_wifi::Status::kOk) {
+  if (wifi.loadProfile(ssid, profile) == roo_wifi::Status::kOk) {
     // Use the non-secret profile metadata.
   }
   return true;  // Return false to stop early.
@@ -130,11 +145,12 @@ wifi.forEachProfile([&](roo_wifi::ProfileId id) {
 ```
 
 Enumeration order is unspecified. Each profile uses compact, versioned settings
-and secret values; an ID is still visited if either is corrupt so
-`loadProfile()` can report the error. Enumeration works independently of radio
+and secret values. Enumeration reads settings to recover each SSID; damaged
+settings stop enumeration with `kCorrupt`. Credential errors are reported by
+`loadProfile()`. Callback SSID references are borrowed for the callback only. Enumeration works independently of radio
 enablement after `begin()`.
 
-After a saved-profile connection succeeds, its ID is remembered. On restart or
+After a saved-profile connection succeeds, its SSID is remembered. On restart or
 radio re-enable, that profile reconnects when its `auto_connect` setting is true.
 This applies equally to open and credential-protected profiles. Temporary
 connections are never remembered, and explicitly disabling auto-connect keeps a

@@ -38,7 +38,7 @@ void RunResourceCycle(roo_wifi::Controller& controller,
   controller.disconnect();
   roo_wifi::Pump(scheduler);
   roo_wifi::Profile profile;
-  controller.loadProfile(1, profile);
+  controller.loadProfile(roo_wifi::TestConfig().ssid, profile);
   scheduler.pruneCanceled();
 }
 #endif
@@ -83,50 +83,53 @@ TEST(BackendResourceTest, RetainedPlateauAndAllocationFreeObservation) {
   GTEST_SKIP() << "The allocation counter replaces global new/delete, which "
                   "is incompatible with AddressSanitizer's allocator.";
 #else
-  for (uint16_t n : {0, 20, 40, 100}) {
-    size_t baseline = live.load();
-    peak = baseline;
-    roo_scheduler::Scheduler scheduler;
-    TestStation native;
-    OrderedInterface radio(native);
-    MemoryStore store;
-    Controller::Options options;
-    options.max_scan_results = n;
-    Controller controller(radio, store, scheduler, options);
-    store.enabled = true;
-    controller.begin();
-    Pump(scheduler);
-    native.aps.resize(n + 1);
-    ProfileSettings settings;
-    settings.connection = TestConfig();
-    CredentialUpdate update;
-    update.intent = CredentialIntent::kClear;
-    store.saveProfile(1, settings, update);
-    for (int i = 0; i < 20; ++i) {
-      RunResourceCycle(controller, native, scheduler);
+  {
+    for (uint16_t n : {0, 20, 40, 100}) {
+      size_t baseline = live.load();
+      peak = baseline;
+      roo_scheduler::Scheduler scheduler;
+      TestStation native;
+      OrderedInterface radio(native);
+      MemoryStore store;
+      Controller::Options options;
+      options.max_scan_results = n;
+      Controller controller(radio, store, scheduler, options);
+      store.enabled = true;
+      controller.begin();
+      Pump(scheduler);
+      native.aps.resize(n + 1);
+      ProfileSettings settings;
+      settings.connection = TestConfig();
+      CredentialUpdate update;
+      update.intent = CredentialIntent::kClear;
+      store.saveProfile(settings, update);
+      for (int i = 0; i < 20; ++i) {
+        RunResourceCycle(controller, native, scheduler);
+      }
+      size_t retained = live.load();
+      for (int i = 0; i < 200; ++i) {
+        RunResourceCycle(controller, native, scheduler);
+      }
+      size_t after = live.load();
+      EXPECT_EQ(after, retained);
+      size_t calls = allocations.load();
+      for (int i = 0; i < 100; ++i) {
+        controller.scanSnapshot();
+        controller.linkState();
+        controller.isEnabled();
+        controller.isScanning();
+        controller.support();
+      }
+      EXPECT_EQ(allocations.load(), calls);
+      EXPECT_EQ(controller.scanSnapshot().count, n);
+      EXPECT_TRUE(controller.scanSnapshot().truncated);
+      std::printf(
+          "N=%u ScanRecord=%zu Controller=%zu OrderedInterface=%zu "
+          "retained=%zu "
+          "peak=%zu\n",
+          n, sizeof(ScanRecord), sizeof(Controller), sizeof(OrderedInterface),
+          retained - baseline, peak.load() - baseline);
     }
-    size_t retained = live.load();
-    for (int i = 0; i < 200; ++i) {
-      RunResourceCycle(controller, native, scheduler);
-    }
-    size_t after = live.load();
-    EXPECT_EQ(after, retained);
-    size_t calls = allocations.load();
-    for (int i = 0; i < 100; ++i) {
-      controller.scanSnapshot();
-      controller.linkState();
-      controller.isEnabled();
-      controller.isScanning();
-      controller.support();
-    }
-    EXPECT_EQ(allocations.load(), calls);
-    EXPECT_EQ(controller.scanSnapshot().count, n);
-    EXPECT_TRUE(controller.scanSnapshot().truncated);
-    std::printf(
-        "N=%u ScanRecord=%zu Controller=%zu OrderedInterface=%zu retained=%zu "
-        "peak=%zu\n",
-        n, sizeof(ScanRecord), sizeof(Controller), sizeof(OrderedInterface),
-        retained - baseline, peak.load() - baseline);
   }
 #endif
 }

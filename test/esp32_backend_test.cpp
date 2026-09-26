@@ -169,7 +169,8 @@ struct NegotiationCase {
   wifi_auth_mode_t negotiated;
   bool accepted;
 };
-class Esp32NegotiationTest : public ::testing::TestWithParam<NegotiationCase> {};
+class Esp32NegotiationTest : public ::testing::TestWithParam<NegotiationCase> {
+};
 
 TEST_P(Esp32NegotiationTest, AcceptsOnlyCompatibleNegotiation) {
   const auto c = GetParam();
@@ -182,7 +183,8 @@ TEST_P(Esp32NegotiationTest, AcceptsOnlyCompatibleNegotiation) {
   environment->queueConnectionAttempt(attempt);
   auto ap = std::make_unique<AccessPoint>(
       roo_testing_transducers::wifi::MacAddress(2, 0, 0, 0, 1, 1), "mixed");
-  ap->setAuthMode(static_cast<roo_testing_transducers::wifi::AuthMode>(c.advertised));
+  ap->setAuthMode(
+      static_cast<roo_testing_transducers::wifi::AuthMode>(c.advertised));
   ap->setPasswd("password");
   environment->addAccessPoint(std::move(ap));
   FakeEsp32().setWifiEnvironment(environment);
@@ -203,18 +205,25 @@ TEST_P(Esp32NegotiationTest, AcceptsOnlyCompatibleNegotiation) {
   CredentialUpdate update;
   update.intent = CredentialIntent::kReplace;
   update.replacement = secret;
-  ASSERT_EQ(controller.saveProfile(7, settings, update), Status::kOk);
-  ASSERT_EQ(controller.connect(7), Status::kOk);
+  ASSERT_EQ(controller.saveProfile(settings, update), Status::kOk);
+  ASSERT_EQ(controller.connect(settings.connection.ssid), Status::kOk);
   RunBackend(scheduler);
   Profile persisted;
-  ASSERT_EQ(controller.loadProfile(7, persisted), Status::kOk);
+  ASSERT_EQ(controller.loadProfile(settings.connection.ssid, persisted),
+            Status::kOk);
   EXPECT_EQ(persisted.settings.connection.security, c.configured);
   if (c.accepted) {
     EXPECT_EQ(controller.linkState().phase, LinkPhase::kAddressReady);
     auto expected = c.configured;
-    if (c.negotiated == WIFI_AUTH_WPA3_PSK) expected = roo_wifi::AuthMode::kWpa3Personal;
-    if (c.negotiated == WIFI_AUTH_WPA2_PSK) expected = roo_wifi::AuthMode::kWpa2Personal;
-    if (c.negotiated == WIFI_AUTH_WPA_PSK) expected = roo_wifi::AuthMode::kWpaPersonal;
+    if (c.negotiated == WIFI_AUTH_WPA3_PSK) {
+      expected = roo_wifi::AuthMode::kWpa3Personal;
+    }
+    if (c.negotiated == WIFI_AUTH_WPA2_PSK) {
+      expected = roo_wifi::AuthMode::kWpa2Personal;
+    }
+    if (c.negotiated == WIFI_AUTH_WPA_PSK) {
+      expected = roo_wifi::AuthMode::kWpaPersonal;
+    }
     EXPECT_EQ(controller.linkState().security, expected);
   } else {
     EXPECT_EQ(controller.linkState().phase, LinkPhase::kIdle);
@@ -267,21 +276,23 @@ TEST(Esp32BackendTest, PreferencesReopen) {
   settings.connection = TestConfig("persisted");
   CredentialUpdate update;
   update.intent = CredentialIntent::kClear;
-  ASSERT_EQ(store.saveProfile(0x1234, settings, update), Status::kOk);
+  ASSERT_EQ(store.saveProfile(settings, update), Status::kOk);
   PrefsStore reopened;
   ASSERT_EQ(reopened.begin(), Status::kOk);
-  std::vector<ProfileId> ids;
-  ASSERT_EQ(reopened.forEachProfile([&](ProfileId id) {
+  std::vector<Ssid> ids;
+  ASSERT_EQ(reopened.forEachProfile([&](Ssid id) {
     ids.push_back(id);
     return true;
   }),
             Status::kOk);
-  EXPECT_NE(std::find(ids.begin(), ids.end(), 0x1234), ids.end());
+  EXPECT_NE(std::find(ids.begin(), ids.end(), settings.connection.ssid),
+            ids.end());
   Profile out;
-  ASSERT_EQ(reopened.loadProfile(0x1234, out), Status::kOk);
+  ASSERT_EQ(reopened.loadProfile(settings.connection.ssid, out), Status::kOk);
   EXPECT_EQ(out.settings.connection.ssid.size, 9u);
-  EXPECT_EQ(reopened.removeProfile(0x1234), Status::kOk);
-  EXPECT_EQ(store.loadProfile(0x1234, out), Status::kNotFound);
+  EXPECT_EQ(reopened.removeProfile(settings.connection.ssid), Status::kOk);
+  EXPECT_EQ(store.loadProfile(settings.connection.ssid, out),
+            Status::kNotFound);
 }
 
 // Verifies profile persistence can use a caller-owned roo_prefs backend.
@@ -293,10 +304,10 @@ TEST(Esp32BackendTest, CustomPreferencesBackend) {
   settings.connection = TestConfig("custom-store");
   CredentialUpdate update;
   update.intent = CredentialIntent::kClear;
-  ASSERT_EQ(store.saveProfile(0x5678, settings, update), Status::kOk);
+  ASSERT_EQ(store.saveProfile(settings, update), Status::kOk);
   Profile out;
-  ASSERT_EQ(store.loadProfile(0x5678, out), Status::kOk);
+  ASSERT_EQ(store.loadProfile(settings.connection.ssid, out), Status::kOk);
   EXPECT_EQ(out.settings.connection.ssid.size, 12u);
-  EXPECT_EQ(store.removeProfile(0x5678), Status::kOk);
+  EXPECT_EQ(store.removeProfile(settings.connection.ssid), Status::kOk);
 }
 }  // namespace roo_wifi
