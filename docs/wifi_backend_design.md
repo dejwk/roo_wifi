@@ -847,7 +847,7 @@ contract does not promise every platform can apply every setting.
 
 ## Implementation Plan
 
-Authoring reference: [embedded C++ authoring](../.github/instructions/embedded-cpp-code-authoring.instructions.md).
+Authoring reference: [embedded C++ authoring](../.github/instructions/general-cpp-code-authoring-instructions.md).
 Designs follow the [repo-wide design authoring instructions](../.github/instructions/embedded-design-doc-authoring.instructions.md).
 All new targets below belong to `roo_wifi`. Run narrow tests before broader
 checks; the separate UI design owns visual examples and rendering validation.

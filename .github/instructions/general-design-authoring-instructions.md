@@ -1,15 +1,18 @@
 ---
-name: "roo_wifi Design Doc Authoring"
-description: "Use when writing or updating design docs, implementation plans, architecture docs, or API proposals in this repository. Repository-wide roo_wifi design guidance adapted from roo_windows."
-applyTo: "**"
+name: "Embedded Design Doc Authoring"
+description: "Use when writing or updating design docs, implementation plans, or API proposals in this repository. Shared baseline across roo libraries."
+applyTo:
+  - "docs/**/*.md"
+  - "doc/**/*.md"
 ---
-# roo_wifi Design Doc Authoring
+# Embedded Design Doc Authoring
 
-These are repository-wide instructions for authoring designs, API proposals,
-and implementation plans in `roo_wifi`, wherever those documents live. Copied
-from the `roo_windows` embedded design-authoring baseline, with UI/rendering
-requirements removed. Apply the structure, clarity, resource analysis, and
-validation rules below to backend and platform designs.
+Use this instruction for shared design-doc expectations across roo
+repositories. The authoritative source is
+`roo-registry/template/push/.github/instructions/general-design-authoring-instructions.md`.
+Make shared changes there and sync this file to consuming repositories.
+Repo-local guidance can add project-specific references, validation, and
+constraints on top of this baseline.
 
 ## Audience and Purpose
 
@@ -118,7 +121,9 @@ Use this section order unless a narrower document genuinely needs less:
 - Split Implementation Plan into small incremental subsections or phases that
   each map to a single commit.
 - Start Implementation Plan with a short authoring-reference line that links
-  the corresponding repo-local code-authoring guidance.
+  the corresponding repo-local code-authoring guidance, including the shared
+  [C++ authoring instructions](general-cpp-code-authoring-instructions.md) for
+  C++ implementation work.
 - Each implementation step should describe the intended code change slice,
   include a proposed commit message, and state the narrow validation that
   makes that slice complete.
@@ -137,9 +142,7 @@ Use this section order unless a narrower document genuinely needs less:
 - Add an optional Future Work section after Caveats for potential improvements
   that are intentionally left out of scope. Do not use Future Work to defer a
   decision required by the current proposal.
-- LaTeX math is acceptable for formulas when it makes geometric, rendering,
-  or cost analysis clearer. Use inline math for short expressions and display
-  math for longer derivations.
+- LaTeX math is acceptable when it clarifies technical or cost analysis.
 - When Proposed API introduces entry points that will land before full support
   is implemented, specify the interim behavior explicitly: if the API can
   return an error, prefer returning an error; otherwise emit
@@ -161,7 +164,7 @@ Rules:
   with the reasoning.
 - When a decision depends on quantitative tradeoffs (RAM versus cycles,
   branch cost versus cache footprint, etc.), include the analysis: ballpark
-  per-pixel or per-row cost estimates, payload-size deltas, and the reasoning
+  per-operation cost estimates, payload-size deltas, and the reasoning
   that selects the chosen option over the rejected ones.
 - If the analysis genuinely cannot resolve the choice on paper, add a
   numbered phase to the Implementation Plan that runs a targeted micro-
@@ -189,7 +192,6 @@ Rules:
   custom infrastructure and extensibility serve demonstrated requirements.
 - Resource reasoning covers readable implementation, compiled size, and relevant
   private state, as well as RAM/CPU and realistic versus worst-case workloads.
-
 - Section order matches the required structure.
 - References are generally hyperlinks when a stable link target exists.
 - The intended implementation, review, and long-term documentation audiences can
