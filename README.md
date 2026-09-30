@@ -27,7 +27,7 @@ Profile saves and deletes return their storage outcome synchronously.
 #include <roo_scheduler.h>
 #include <roo_wifi.h>
 
-roo_scheduler::Scheduler scheduler;
+roo_scheduler::SchedulingService scheduler;
 roo_wifi::WiFi wifi(scheduler);
 
 class WifiListener : public roo_wifi::Listener {
@@ -96,7 +96,7 @@ passwords on an SD-backed `roo_io::Filesystem`:
 #include "roo_io/fs/arduino/sdfs.h"
 #include "roo_prefs/store/filesystem_store.h"
 
-roo_scheduler::Scheduler scheduler;
+roo_scheduler::SchedulingService scheduler;
 roo_prefs::FilesystemStore preferences(roo_io::SD, "/prefs");
 roo_wifi::WiFi wifi(scheduler, preferences);
 

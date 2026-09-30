@@ -5,7 +5,7 @@ namespace roo_wifi {
 /// Provides initialized controller dependencies and a notification observer.
 class BackendTest : public testing::Test {
  protected:
-  roo_scheduler::Scheduler scheduler;
+  roo_scheduler::SchedulingService scheduler;
   TestStation native;
   OrderedInterface radio{native};
   MemoryStore store;
@@ -456,7 +456,7 @@ TEST(StoreTest, EnumerationAndCorruptProfiles) {
 // Verifies the controller gates enumeration on its lifecycle and permits
 // profile reads from the visitor.
 TEST(ProfileEnumerationTest, ControllerFacade) {
-  roo_scheduler::Scheduler scheduler;
+  roo_scheduler::SchedulingService scheduler;
   TestStation native;
   OrderedInterface radio(native);
   MemoryStore store;
@@ -483,7 +483,7 @@ TEST(ProfileEnumerationTest, ControllerFacade) {
 // Verifies profile invalidation is delivered after persistence has settled, so
 // a listener can immediately rebuild its enumeration-derived model.
 TEST(ProfileEnumerationTest, ReloadsFromProfilesChanged) {
-  roo_scheduler::Scheduler scheduler;
+  roo_scheduler::SchedulingService scheduler;
   TestStation native;
   OrderedInterface radio(native);
   MemoryStore store;
@@ -569,7 +569,7 @@ namespace roo_wifi {
 // Verifies an unsettled cancellation produces one Timeout and permanently
 // closes radio admission while radio-off profile management remains available.
 TEST(TimeoutTest, UnsettledNativeWorkCannotOverlapNewAttempt) {
-  roo_scheduler::Scheduler scheduler;
+  roo_scheduler::SchedulingService scheduler;
   TestStation native;
   OrderedInterface radio(native);
   MemoryStore store;
@@ -606,7 +606,7 @@ TEST(TimeoutTest, UnsettledNativeWorkCannotOverlapNewAttempt) {
 }
 
 TEST(TimeoutTest, DisconnectCancellationHasTransitionDeadline) {
-  roo_scheduler::Scheduler scheduler;
+  roo_scheduler::SchedulingService scheduler;
   TestStation native;
   OrderedInterface radio(native);
   MemoryStore store;
@@ -641,7 +641,7 @@ TEST(TimeoutTest, DisconnectCancellationHasTransitionDeadline) {
 
 // Verifies timeout monitoring sleeps until the pending operation's deadline.
 TEST(TimeoutTest, MonitorsAtDeadlineRatherThanPolling) {
-  roo_scheduler::Scheduler scheduler;
+  roo_scheduler::SchedulingService scheduler;
   TestStation native;
   OrderedInterface radio(native);
   MemoryStore store;
@@ -660,7 +660,7 @@ TEST(TimeoutTest, MonitorsAtDeadlineRatherThanPolling) {
 
 // Verifies the last successful open profile is selected after radio enablement.
 TEST(StartupTest, LastProfileAndAdmissionSnapshot) {
-  roo_scheduler::Scheduler scheduler;
+  roo_scheduler::SchedulingService scheduler;
   TestStation native;
   OrderedInterface radio(native);
   MemoryStore store;
@@ -716,7 +716,7 @@ TEST_F(BackendTest, RemembersLastSuccessfulSavedProfile) {
 
 // A remembered profile with auto-connect disabled is not started.
 TEST(StartupTest, AutoConnectOptOutIncludesOpenProfiles) {
-  roo_scheduler::Scheduler scheduler;
+  roo_scheduler::SchedulingService scheduler;
   TestStation native;
   OrderedInterface radio(native);
   MemoryStore store;
@@ -841,7 +841,7 @@ TEST(StoreTest, SettingsCommitVerification) {
 namespace roo_wifi {
 // Verifies a failed second owner cannot detach an already-owned Interface.
 TEST(OwnershipTest, FailedBeginDoesNotShutdownExistingOwner) {
-  roo_scheduler::Scheduler scheduler;
+  roo_scheduler::SchedulingService scheduler;
   TestStation native;
   OrderedInterface radio(native);
   MemoryStore store;

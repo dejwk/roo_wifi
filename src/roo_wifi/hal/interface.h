@@ -6,7 +6,7 @@
 #include "roo_wifi/radio.h"
 
 namespace roo_scheduler {
-class Scheduler;
+class SchedulerClient;
 }
 
 namespace roo_wifi {
@@ -41,11 +41,11 @@ class Interface {
 
     /// Delivers the terminal result for an admitted operation exactly once.
     /// @param result Completed operation and its outcome.
-    virtual void onOperationFinished(const OperationResult &result) = 0;
+    virtual void onOperationFinished(const OperationResult& result) = 0;
 
     /// Reports association, address readiness, or another link-state change.
     /// @param state Current observed link diagnostics.
-    virtual void onLinkChanged(const LinkState &state) = 0;
+    virtual void onLinkChanged(const LinkState& state) = 0;
 
     /// Reports the observed physical radio state.
     /// @param enabled True when the radio is enabled.
@@ -60,7 +60,8 @@ class Interface {
   /// may run on other threads, but must hand events off to this scheduler.
   /// @param sink Receiver of deferred radio events.
   /// @param scheduler Context on which events are delivered.
-  virtual Status begin(Sink &sink, roo_scheduler::Scheduler &scheduler) = 0;
+  virtual Status begin(Sink& sink,
+                       roo_scheduler::SchedulerClient& scheduler) = 0;
 
   /// Returns actual hardware support, independently of consumer presentation.
   virtual Support support() const = 0;
@@ -79,8 +80,8 @@ class Interface {
   /// @param id Nonzero operation ID echoed in the deferred completion.
   /// @param config Connection settings to copy.
   /// @param credentials Credential material to copy.
-  virtual Status connect(OperationId id, const ConnectionConfig &config,
-                         const Credentials &credentials) = 0;
+  virtual Status connect(OperationId id, const ConnectionConfig& config,
+                         const Credentials& credentials) = 0;
 
   /// Starts a physical disconnect and reports its lifecycle outcome.
   /// @param id Nonzero operation ID echoed in the deferred completion.
@@ -101,8 +102,8 @@ class Interface {
   /// @param out Destination record array.
   /// @param capacity Number of records that fit in @p out.
   /// @param result Receives count and truncation state on success.
-  virtual Status readScanResults(ScanRecord *out, size_t capacity,
-                                 ScanRead &result) const = 0;
+  virtual Status readScanResults(ScanRecord* out, size_t capacity,
+                                 ScanRead& result) const = 0;
 
   /// Detaches the sink and prevents all subsequent event delivery.
   virtual void shutdown() = 0;

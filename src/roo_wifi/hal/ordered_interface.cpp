@@ -5,7 +5,7 @@
 #include <type_traits>
 
 namespace roo_wifi {
-OrderedInterface::QueuedEvent::QueuedEvent(const NativeStation::Event &event)
+OrderedInterface::QueuedEvent::QueuedEvent(const NativeStation::Event& event)
     : native_code(event.native_code), kind(event.kind), status(event.status) {
   static_assert(std::is_trivially_copyable<QueuedEvent>::value,
                 "Queue assignment must preserve the active union member");
@@ -68,12 +68,12 @@ NativeStation::Event OrderedInterface::QueuedEvent::expand() const {
   return event;
 }
 
-OrderedInterface::OrderedInterface(NativeStation &native) : native_(native) {}
+OrderedInterface::OrderedInterface(NativeStation& native) : native_(native) {}
 
 OrderedInterface::~OrderedInterface() { shutdown(); }
 
-Status OrderedInterface::begin(Sink &sink,
-                               roo_scheduler::Scheduler &scheduler) {
+Status OrderedInterface::begin(Sink& sink,
+                               roo_scheduler::SchedulerClient& scheduler) {
   if (attached_) return Status::kBusy;
   dispatch_.reset(
       new roo_scheduler::SingletonTask(scheduler, [this] { drain(); }));
@@ -122,8 +122,8 @@ Status OrderedInterface::startScan(OperationId id, uint16_t capacity) {
   return status;
 }
 
-Status OrderedInterface::connect(OperationId id, const ConnectionConfig &config,
-                                 const Credentials &secret) {
+Status OrderedInterface::connect(OperationId id, const ConnectionConfig& config,
+                                 const Credentials& secret) {
   Status status = stationAdmission(id);
   if (status != Status::kOk) return status;
   if (!enabled_) return Status::kDisabled;
@@ -198,8 +198,8 @@ Status OrderedInterface::cancelConnect() {
   return Status::kOk;
 }
 
-Status OrderedInterface::readScanResults(ScanRecord *out, size_t capacity,
-                                         ScanRead &result) const {
+Status OrderedInterface::readScanResults(ScanRecord* out, size_t capacity,
+                                         ScanRead& result) const {
   return native_.readScan(out, capacity, result);
 }
 
@@ -218,7 +218,7 @@ void OrderedInterface::shutdown() {
   count_ = 0;
 }
 
-void OrderedInterface::post(const NativeStation::Event &event) {
+void OrderedInterface::post(const NativeStation::Event& event) {
   roo::lock_guard<roo::mutex> lock(mutex_);
   if (count_ == queue_.size()) {
     overflow_ = true;
@@ -302,7 +302,7 @@ void OrderedInterface::finishScan(Status error, int32_t code) {
   sink_->onOperationFinished(result);
 }
 
-void OrderedInterface::process(const NativeStation::Event &event) {
+void OrderedInterface::process(const NativeStation::Event& event) {
   using E = NativeStation::Event;
   if (faulted_) return;
   switch (event.kind) {

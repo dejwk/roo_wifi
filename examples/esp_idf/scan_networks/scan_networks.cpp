@@ -99,7 +99,7 @@ class ScanListener : public roo_wifi::Listener {
   bool scan_requested_ = false;
 };
 
-roo_scheduler::Scheduler scheduler;
+roo_scheduler::SchedulingService scheduler;
 roo_wifi::WiFi wifi(scheduler);
 ScanListener listener(wifi);
 

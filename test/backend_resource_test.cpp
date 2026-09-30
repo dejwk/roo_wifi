@@ -29,7 +29,7 @@ struct alignas(std::max_align_t) Allocation {
 /// Exercises the operations that may retain bounded controller resources.
 void RunResourceCycle(roo_wifi::Controller& controller,
                       roo_wifi::TestStation& native,
-                      roo_scheduler::Scheduler& scheduler) {
+                      roo_scheduler::SchedulingService& scheduler) {
   controller.startScan();
   roo_wifi::Pump(scheduler);
   native.emit({roo_wifi::NativeStation::Event::kScanDone});
@@ -87,7 +87,7 @@ TEST(BackendResourceTest, RetainedPlateauAndAllocationFreeObservation) {
     for (uint16_t n : {0, 20, 40, 100}) {
       size_t baseline = live.load();
       peak = baseline;
-      roo_scheduler::Scheduler scheduler;
+      roo_scheduler::SchedulingService scheduler;
       TestStation native;
       OrderedInterface radio(native);
       MemoryStore store;

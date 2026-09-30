@@ -29,11 +29,12 @@ bool SameConfig(const ConnectionConfig& a, const ConnectionConfig& b) {
 }  // namespace
 
 Controller::Controller(Interface& interface, Store& store,
-                       roo_scheduler::Scheduler& scheduler)
+                       roo_scheduler::SchedulerClient& scheduler)
     : Controller(interface, store, scheduler, Options{}) {}
 
 Controller::Controller(Interface& interface, Store& store,
-                       roo_scheduler::Scheduler& scheduler, Options options)
+                       roo_scheduler::SchedulerClient& scheduler,
+                       Options options)
     : interface_(interface),
       store_(store),
       scheduler_(scheduler),

@@ -13,7 +13,7 @@ namespace roo_wifi {
 namespace {
 static_assert(std::is_same<WiFi, Esp32WiFi>::value,
               "ESP32 builds select Esp32WiFi as roo_wifi::WiFi");
-static_assert(std::is_constructible<Esp32WiFi, roo_scheduler::Scheduler&,
+static_assert(std::is_constructible<Esp32WiFi, roo_scheduler::SchedulerClient&,
                                     roo_prefs::Store&>::value,
               "Esp32WiFi accepts a caller-owned roo_prefs backend");
 
@@ -26,7 +26,7 @@ esp_ip4_addr_t Ip(uint8_t a, uint8_t b, uint8_t c, uint8_t d) {
 }
 
 /// Runs scheduler work while allowing the ESP32 simulation to advance.
-void RunBackend(roo_scheduler::Scheduler& scheduler) {
+void RunBackend(roo_scheduler::SchedulingService& scheduler) {
   for (int i = 0; i < 1000; ++i) {
     scheduler.executeEligibleTasks();
     delay(1);
@@ -36,7 +36,7 @@ void RunBackend(roo_scheduler::Scheduler& scheduler) {
 
 // Exercise event delivery while the application sleeps inside its scheduler.
 TEST(Esp32BackendTest, EnableWhileSchedulerWaits) {
-  roo_scheduler::Scheduler scheduler;
+  roo_scheduler::SchedulingService scheduler;
   Esp32IdfInterface radio;
   MemoryStore store;
   Controller controller(radio, store, scheduler);
@@ -73,7 +73,7 @@ TEST(Esp32BackendTest, SecuritySelectionAndSwitch) {
   environment.addAccessPoint(std::move(open));
   environment.addAccessPoint(std::move(secure));
   FakeEsp32().setWifiEnvironment(environment);
-  roo_scheduler::Scheduler scheduler;
+  roo_scheduler::SchedulingService scheduler;
   Esp32IdfInterface radio;
   MemoryStore store;
   store.enabled = true;
@@ -133,7 +133,7 @@ TEST(Esp32BackendTest, CancelScansWithoutFaulting) {
   auto environment = std::make_shared<Environment>();
   environment->setScanDurationMs(500);
   FakeEsp32().setWifiEnvironment(environment);
-  roo_scheduler::Scheduler scheduler;
+  roo_scheduler::SchedulingService scheduler;
   Esp32IdfInterface radio;
   MemoryStore store;
   store.enabled = true;
@@ -188,7 +188,7 @@ TEST_P(Esp32NegotiationTest, AcceptsOnlyCompatibleNegotiation) {
   ap->setPasswd("password");
   environment->addAccessPoint(std::move(ap));
   FakeEsp32().setWifiEnvironment(environment);
-  roo_scheduler::Scheduler scheduler;
+  roo_scheduler::SchedulingService scheduler;
   Esp32IdfInterface radio;
   MemoryStore store;
   store.enabled = true;
@@ -259,7 +259,7 @@ INSTANTIATE_TEST_SUITE_P(
 
 // Verifies a second owner cannot attach to the process-global station.
 TEST(Esp32BackendTest, ExclusiveOwnership) {
-  roo_scheduler::Scheduler scheduler;
+  roo_scheduler::SchedulingService scheduler;
   Esp32IdfInterface a, b;
   MemoryStore sa;
   MemoryStore sb;

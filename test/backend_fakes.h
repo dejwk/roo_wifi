@@ -10,7 +10,7 @@
 
 namespace roo_wifi {
 /// Creates a portable open-network configuration for tests.
-inline ConnectionConfig TestConfig(const char *name = "network") {
+inline ConnectionConfig TestConfig(const char* name = "network") {
   ConnectionConfig config;
   config.ssid.size = strlen(name);
   memcpy(config.ssid.bytes, name, config.ssid.size);
@@ -25,7 +25,7 @@ class MemoryStore : public FieldStore {
   Status begin() override { return Status::kOk; }
 
   /// Returns the configured persisted enablement value.
-  Status readEnabled(bool &out) const override {
+  Status readEnabled(bool& out) const override {
     out = enabled;
     return Status::kOk;
   }
@@ -38,7 +38,7 @@ class MemoryStore : public FieldStore {
   }
 
   /// Copies a named field from the in-memory map.
-  Status readField(const char *key, uint8_t *out, size_t &size) const override {
+  Status readField(const char* key, uint8_t* out, size_t& size) const override {
     auto it = values.find(key);
     if (it == values.end()) return Status::kNotFound;
     if (it->second.size() > size) return Status::kCorrupt;
@@ -48,7 +48,7 @@ class MemoryStore : public FieldStore {
   }
 
   /// Copies a named field into the in-memory map.
-  Status writeField(const char *key, const uint8_t *data,
+  Status writeField(const char* key, const uint8_t* data,
                     size_t size) override {
     if (++writes == fail_at) return Status::kStorageFailure;
     if (size > 104 || strlen(key) > 15) return Status::kInvalidArgument;
@@ -57,16 +57,16 @@ class MemoryStore : public FieldStore {
   }
 
   /// Removes a named field from the in-memory map.
-  Status eraseField(const char *key) override {
+  Status eraseField(const char* key) override {
     if (++writes == fail_at) return Status::kStorageFailure;
     values.erase(key);
     return Status::kOk;
   }
 
   /// Visits every field key in deterministic map order.
-  Status enumerateFields(FieldVisitor visitor, void *context) const override {
+  Status enumerateFields(FieldVisitor visitor, void* context) const override {
     if (enumeration_error != Status::kOk) return enumeration_error;
-    for (const auto &entry : values) {
+    for (const auto& entry : values) {
       if (!visitor(context, entry.first.data(), entry.first.size())) {
         return Status::kStopped;
       }
@@ -86,7 +86,7 @@ class MemoryStore : public FieldStore {
 class TestStation : public NativeStation {
  public:
   /// Attaches the receiver that accepts manually emitted events.
-  Status attach(Receiver &receiver) override {
+  Status attach(Receiver& receiver) override {
     receiver_ = &receiver;
     return Status::kOk;
   }
@@ -118,8 +118,8 @@ class TestStation : public NativeStation {
   }
 
   /// Records connection inputs and returns the configured outcome.
-  Status connect(const ConnectionConfig &config,
-                 const Credentials &secret) override {
+  Status connect(const ConnectionConfig& config,
+                 const Credentials& secret) override {
     ++connects;
     last_config = config;
     last_secret = secret;
@@ -136,8 +136,8 @@ class TestStation : public NativeStation {
   }
 
   /// Copies the bounded set of configured scan records.
-  Status readScan(ScanRecord *out, size_t capacity,
-                  ScanRead &result) const override {
+  Status readScan(ScanRecord* out, size_t capacity,
+                  ScanRead& result) const override {
     if (read_error != Status::kOk) return read_error;
     size_t n = std::min(capacity, aps.size());
     std::copy_n(aps.begin(), n, out);
@@ -176,7 +176,7 @@ class TestStation : public NativeStation {
     emit(e);
   }
 
-  Receiver *receiver_ = nullptr;
+  Receiver* receiver_ = nullptr;
   int scans = 0;
   int scan_stops = 0;
   int connects = 0;
@@ -199,7 +199,7 @@ class Observer : public Controller::Listener {
 };
 
 /// Executes enough eligible tasks to settle the test fakes' deferred work.
-inline void Pump(roo_scheduler::Scheduler &scheduler) {
+inline void Pump(roo_scheduler::SchedulingService& scheduler) {
   for (int i = 0; i < 12; ++i) scheduler.executeEligibleTasks();
 }
 }  // namespace roo_wifi

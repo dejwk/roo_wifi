@@ -4,7 +4,7 @@ namespace roo_wifi {
 /// Provides an enabled radio and a scheduler-confined notification observer.
 class BackendTest : public testing::Test {
  protected:
-  roo_scheduler::Scheduler scheduler;
+  roo_scheduler::SchedulingService scheduler;
   TestStation native;
   OrderedInterface radio{native};
   MemoryStore store;
@@ -410,7 +410,7 @@ TEST_F(BackendTest, FailedAttemptCanBeRetriedExplicitly) {
 }
 // Verifies unsettled cancellation faults and preserves writes.
 TEST(TimeoutTest, UnsettledCancellationFaultsAndPreservesWrites) {
-  roo_scheduler::Scheduler scheduler;
+  roo_scheduler::SchedulingService scheduler;
   TestStation native;
   OrderedInterface radio(native);
   MemoryStore store;
@@ -441,7 +441,7 @@ TEST(TimeoutTest, UnsettledCancellationFaultsAndPreservesWrites) {
 }
 // Verifies connection timeout settles without fault.
 TEST(TimeoutTest, ConnectionTimeoutSettlesWithoutFault) {
-  roo_scheduler::Scheduler scheduler;
+  roo_scheduler::SchedulingService scheduler;
   TestStation native;
   OrderedInterface radio(native);
   MemoryStore store;
@@ -463,7 +463,7 @@ TEST(TimeoutTest, ConnectionTimeoutSettlesWithoutFault) {
 }
 // Verifies restores last profile unless explicitly superseded.
 TEST(StartupTest, RestoresLastProfileUnlessExplicitlySuperseded) {
-  roo_scheduler::Scheduler scheduler;
+  roo_scheduler::SchedulingService scheduler;
   TestStation native;
   OrderedInterface radio(native);
   MemoryStore store;
@@ -489,7 +489,7 @@ TEST(StartupTest, RestoresLastProfileUnlessExplicitlySuperseded) {
 }
 // Verifies failed begin does not shutdown existing owner.
 TEST(OwnershipTest, FailedBeginDoesNotShutdownExistingOwner) {
-  roo_scheduler::Scheduler scheduler;
+  roo_scheduler::SchedulingService scheduler;
   TestStation native;
   OrderedInterface radio(native);
   MemoryStore store;
@@ -550,7 +550,7 @@ TEST_F(BackendTest, ShutdownInsideListenerStopsNotification) {
 
 // Verifies a timed-out scan retains published results while teardown settles.
 TEST(TimeoutTest, ScanTimeoutWaitsForNativeCancellation) {
-  roo_scheduler::Scheduler scheduler;
+  roo_scheduler::SchedulingService scheduler;
   TestStation native;
   OrderedInterface radio(native);
   MemoryStore store;

@@ -25,6 +25,6 @@ static_assert(std::is_same<decltype(std::declval<roo_wifi::Controller&>()
               "writes return their outcome");
 
 int main() {
-  roo_scheduler::Scheduler scheduler;
+  roo_scheduler::SchedulingService scheduler;
   return scheduler.empty() ? 0 : 1;
 }

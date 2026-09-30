@@ -49,7 +49,7 @@ class NativeStation {
 
     /// Queues a native event for ordered processing.
     /// @param event Native event payload to copy.
-    virtual void post(const Event &event) = 0;
+    virtual void post(const Event& event) = 0;
   };
 
   /// Destroys a detached native station.
@@ -57,7 +57,7 @@ class NativeStation {
 
   /// Attaches the sole event receiver without starting a connection.
   /// @param receiver Receiver that remains valid until detach returns.
-  virtual Status attach(Receiver &receiver) = 0;
+  virtual Status attach(Receiver& receiver) = 0;
 
   /// Detaches the receiver and waits for in-flight callbacks to return.
   virtual void detach() = 0;
@@ -79,8 +79,8 @@ class NativeStation {
   /// Begins selection and connection to a network.
   /// @param config Network settings to apply.
   /// @param credentials Credential material for the attempt.
-  virtual Status connect(const ConnectionConfig &config,
-                         const Credentials &credentials) = 0;
+  virtual Status connect(const ConnectionConfig& config,
+                         const Credentials& credentials) = 0;
 
   /// Continues an asynchronously prepared connection on scheduler context.
   virtual Status continueConnect() = 0;
@@ -92,8 +92,8 @@ class NativeStation {
   /// @param out Destination record array.
   /// @param capacity Number of records that fit in @p out.
   /// @param result Receives count and truncation state on success.
-  virtual Status readScan(ScanRecord *out, size_t capacity,
-                          ScanRead &result) const = 0;
+  virtual Status readScan(ScanRecord* out, size_t capacity,
+                          ScanRead& result) const = 0;
 };
 
 /// Adapts a native station to scheduler-delivered radio operations.
@@ -105,7 +105,7 @@ class OrderedInterface : public Interface, private NativeStation::Receiver {
  public:
   /// Creates a radio adapter that serializes commands for borrowed @p native.
   /// @param native Station that outlives this adapter.
-  explicit OrderedInterface(NativeStation &native);
+  explicit OrderedInterface(NativeStation& native);
 
   /// Destroys the radio adapter after shutting down native event dispatch.
   ~OrderedInterface() override;
@@ -113,7 +113,7 @@ class OrderedInterface : public Interface, private NativeStation::Receiver {
   /// Attaches an event sink and creates deferred dispatch work.
   /// @param sink Controller event recipient.
   /// @param scheduler Context used for deferred dispatch.
-  Status begin(Sink &sink, roo_scheduler::Scheduler &scheduler) override;
+  Status begin(Sink& sink, roo_scheduler::SchedulerClient& scheduler) override;
 
   /// Returns the native station's supported features.
   Support support() const override;
@@ -132,8 +132,8 @@ class OrderedInterface : public Interface, private NativeStation::Receiver {
   /// @param id Operation ID to complete.
   /// @param config Network settings to copy.
   /// @param credentials Credential material to copy.
-  Status connect(OperationId id, const ConnectionConfig &config,
-                 const Credentials &credentials) override;
+  Status connect(OperationId id, const ConnectionConfig& config,
+                 const Credentials& credentials) override;
 
   /// Starts a disconnect operation.
   /// @param id Operation ID to complete.
@@ -150,8 +150,8 @@ class OrderedInterface : public Interface, private NativeStation::Receiver {
   /// @param out Destination record array.
   /// @param capacity Number of records that fit in @p out.
   /// @param result Receives count and truncation state on success.
-  Status readScanResults(ScanRecord *out, size_t capacity,
-                         ScanRead &result) const override;
+  Status readScanResults(ScanRecord* out, size_t capacity,
+                         ScanRead& result) const override;
 
   /// Detaches native callbacks and clears queued work.
   void shutdown() override;
@@ -195,7 +195,7 @@ class OrderedInterface : public Interface, private NativeStation::Receiver {
     QueuedEvent() = default;
 
     /// Copies the fields needed to process @p event into compact storage.
-    explicit QueuedEvent(const NativeStation::Event &event);
+    explicit QueuedEvent(const NativeStation::Event& event);
 
     /// Reconstructs the event fields used by the station state machine.
     NativeStation::Event expand() const;
@@ -211,13 +211,13 @@ class OrderedInterface : public Interface, private NativeStation::Receiver {
   static_assert(sizeof(QueuedEvent) <= 64, "Native event queue entry budget");
 
   /// Enqueues a native event for scheduler-context processing.
-  void post(const NativeStation::Event &) override;
+  void post(const NativeStation::Event&) override;
 
   /// Drains the bounded native-event queue in posting order.
   void drain();
 
   /// Applies one native event to the portable state machine.
-  void process(const NativeStation::Event &);
+  void process(const NativeStation::Event&);
 
   /// Starts a prepared connection after any old link has disconnected.
   void startConnection();
@@ -231,8 +231,8 @@ class OrderedInterface : public Interface, private NativeStation::Receiver {
   /// Reports whether the station transition can admit the requested operation
   /// ID.
   Status stationAdmission(OperationId) const;
-  NativeStation &native_;
-  Sink *sink_ = nullptr;
+  NativeStation& native_;
+  Sink* sink_ = nullptr;
   std::unique_ptr<roo_scheduler::SingletonTask> dispatch_;
   roo::mutex mutex_;
   std::array<QueuedEvent, 16> queue_;
