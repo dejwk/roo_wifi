@@ -161,6 +161,46 @@ constructing `WiFi`; the adapter creates the default event loop, station
 netif, and Wi-Fi driver only when they are not already initialized. In either
 environment, leave the physical station exclusively owned by `roo_wifi`.
 
+## Automatic reconnection
+
+Saved profiles with `auto_connect` enabled retry failed connections after
+0.5, 1, 2, 5, 10, then 30 seconds. The final delay repeats. Delays have ±20%
+jitter by default; configure `Controller::Options::retry` to change them.
+Authentication failures can be transient even with valid credentials: they get
+three attempts before using the final cooldown. Security incompatibility uses
+that cooldown immediately, permitting later discovery without weakening the
+profile's security policy. Invalid settings, unsupported operations, and
+storage failures do not start a retry loop.
+
+A connection that stays address-ready for 60 seconds resets the backoff.
+Explicit connection requests reset it too. Disconnect, disable, shutdown, or
+replacement intent cancels pending retry work. Each retry checks the profile's
+current `auto_connect` flag but retains the connection settings and credentials
+accepted by the original request. Direct `connect(config, credentials)` calls
+remain single-attempt and never enable automatic reconnection.
+
+`state().retry` reports `attempt_count`, `pending`, and `next_attempt`, plus
+`last_status`, a portable `failure` category, and native/AP diagnostics. The
+last failure remains available while the next attempt is running; current
+`state().status == kOk` does not mean the connection has succeeded. Observe
+`StationPhase::kConnected` for address readiness. An authentication failure is
+not proof that the password is wrong.
+
+The connection deadline also bounds waiting for an IP address. A timed-out
+attempt can retry only after native cancellation finishes. Loss of the address
+on an established link starts another address-recovery deadline; a saved
+profile reconnects if DHCP does not recover. Failure to finish native teardown
+still faults the controller, preventing overlapping native attempts.
+
+The ESP32 backend retains at most three compatible AP candidates for 30 seconds.
+A transient failure allows one retry of the selected AP without another
+selection scan. Two failures, AP absence, or incompatible negotiated security
+put that candidate into a 30-second cooldown, allowing another compatible AP
+to be selected. Fresh scans retain unexpired cooldowns. Discovery resumes when
+cached candidates expire or none is eligible. The cache contains radio
+metadata only and preserves the profile's security checks. Custom
+`Esp32IdfInterface` instances can set `Esp32Station::SelectionOptions`.
+
 ## Saved security policy
 
 A profile's `connection.security` is a persistent policy. A
