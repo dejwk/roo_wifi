@@ -201,6 +201,9 @@ class OrderedInterface : public Interface, private NativeStation::Receiver {
     NativeStation::Event expand() const;
 
     int32_t native_code = 0;
+
+    /// Portable connection failure classification.
+    ConnectionFailure failure = ConnectionFailure::kNone;
     NativeStation::Event::Kind kind = NativeStation::Event::kEnabled;
     Status status = Status::kOk;
     Ssid ssid;
@@ -223,7 +226,8 @@ class OrderedInterface : public Interface, private NativeStation::Receiver {
   void startConnection();
 
   /// Settles the active station operation.
-  void finishStation(Status, int32_t = 0);
+  void finishStation(Status, int32_t = 0,
+                     ConnectionFailure = ConnectionFailure::kNone);
 
   /// Settles the active scan operation.
   void finishScan(Status, int32_t = 0);

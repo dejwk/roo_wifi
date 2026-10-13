@@ -16,7 +16,7 @@ class Esp32Station : public NativeStation {
 
   /// Registers ESP event handlers for the supplied receiver.
   /// @param receiver Recipient of translated station events.
-  Status attach(Receiver &receiver) override;
+  Status attach(Receiver& receiver) override;
 
   /// Unregisters ESP event handlers and clears active state.
   void detach() override;
@@ -38,8 +38,8 @@ class Esp32Station : public NativeStation {
   /// Selects an exact access point and begins connection.
   /// @param config Network settings to apply.
   /// @param credentials Credential material for the attempt.
-  Status connect(const ConnectionConfig &config,
-                 const Credentials &credentials) override;
+  Status connect(const ConnectionConfig& config,
+                 const Credentials& credentials) override;
 
   /// Connects to the access point selected by the preceding scan.
   Status continueConnect() override;
@@ -51,19 +51,19 @@ class Esp32Station : public NativeStation {
   /// @param out Destination record array.
   /// @param capacity Number of records that fit in @p out.
   /// @param result Receives count and truncation state on success.
-  Status readScan(ScanRecord *out, size_t capacity,
-                  ScanRead &result) const override;
+  Status readScan(ScanRecord* out, size_t capacity,
+                  ScanRead& result) const override;
 
  private:
   /// Forwards an ESP event callback to its station instance.
-  static void Dispatch(void *, esp_event_base_t, int32_t, void *);
+  static void Dispatch(void*, esp_event_base_t, int32_t, void*);
 
   /// Translates one ESP event into the portable native-station lifecycle.
-  void event(esp_event_base_t, int32_t, void *);
+  void event(esp_event_base_t, int32_t, void*);
 
   /// Applies IP, MAC, and AP settings for the selected scan candidate.
-  Status startSelected(const wifi_ap_record_t &);
-  Receiver *receiver_ = nullptr;
+  Status startSelected(const wifi_ap_record_t&);
+  Receiver* receiver_ = nullptr;
   esp_event_handler_instance_t wifi_handler_ = nullptr;
   esp_event_handler_instance_t ip_handler_ = nullptr;
   mutable roo::mutex mutex_;
@@ -71,6 +71,7 @@ class Esp32Station : public NativeStation {
   bool scan_active_ = false;
   bool scan_cancelled_ = false;
   bool prepared_ = false;
+  ConnectionFailure rejected_security_ = ConnectionFailure::kNone;
   wifi_ap_record_t selected_ = {};
   ConnectionConfig config_;
   Credentials secret_;
@@ -84,7 +85,7 @@ class Esp32Station : public NativeStation {
 class Esp32IdfInterface : private Esp32Station, public OrderedInterface {
  public:
   /// Creates the station driver and its ordered interface.
-  Esp32IdfInterface() : OrderedInterface(static_cast<Esp32Station &>(*this)) {}
+  Esp32IdfInterface() : OrderedInterface(static_cast<Esp32Station&>(*this)) {}
 
   /// Destroys the ESP-IDF radio adapter.
   /// Shuts down ordered dispatch before destroying the station driver.

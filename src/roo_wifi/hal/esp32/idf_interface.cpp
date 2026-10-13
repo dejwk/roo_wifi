@@ -68,6 +68,32 @@ CipherType Cipher(wifi_cipher_type_t c) {
   }
 }
 
+// Distinguishes retryable radio/authentication failures from incompatible APs.
+ConnectionFailure ClassifyDisconnect(uint16_t reason) {
+  switch (reason) {
+    case WIFI_REASON_NO_AP_FOUND:
+    case WIFI_REASON_NO_AP_FOUND_IN_RSSI_THRESHOLD:
+      return ConnectionFailure::kNetworkNotFound;
+    case WIFI_REASON_AUTH_FAIL:
+    case WIFI_REASON_4WAY_HANDSHAKE_TIMEOUT:
+    case WIFI_REASON_HANDSHAKE_TIMEOUT:
+    case WIFI_REASON_GROUP_KEY_UPDATE_TIMEOUT:
+    case WIFI_REASON_INVALID_PMKID:
+      return ConnectionFailure::kAuthentication;
+    case WIFI_REASON_GROUP_CIPHER_INVALID:
+    case WIFI_REASON_PAIRWISE_CIPHER_INVALID:
+    case WIFI_REASON_AKMP_INVALID:
+    case WIFI_REASON_UNSUPP_RSN_IE_VERSION:
+    case WIFI_REASON_INVALID_RSN_IE_CAP:
+    case WIFI_REASON_CIPHER_SUITE_REJECTED:
+    case WIFI_REASON_NO_AP_FOUND_W_COMPATIBLE_SECURITY:
+    case WIFI_REASON_NO_AP_FOUND_IN_AUTHMODE_THRESHOLD:
+      return ConnectionFailure::kIncompatibleSecurity;
+    default:
+      return ConnectionFailure::kTransient;
+  }
+}
+
 /// Translates an ESP access-point record into a portable scan record.
 ScanRecord Record(const wifi_ap_record_t& ap) {
   ScanRecord r;
@@ -286,6 +312,7 @@ Status Esp32Station::connect(const ConnectionConfig& config,
   // IDF's SSID filter is a C string, so reject unrepresentable byte SSIDs.
   if (memchr(config.ssid.bytes, 0, config.ssid.size) != nullptr)
     return Status::kUnsupported;
+  rejected_security_ = ConnectionFailure::kNone;
   config_ = config;
   secret_ = secret;
   uint8_t ssid[33] = {};
@@ -460,6 +487,10 @@ void Esp32Station::event(esp_event_base_t base, int32_t id, void* data) {
               return;
             }
           }
+          event.link.failure =
+              event.status != Status::kOk ? ConnectionFailure::kTransient
+              : fetched == 0 ? ConnectionFailure::kNetworkNotFound
+                             : ConnectionFailure::kIncompatibleSecurity;
           secret_ = {};
           event.kind = Event::kDisconnected;
           event.link.ssid = config_.ssid;
@@ -481,6 +512,7 @@ void Esp32Station::event(esp_event_base_t base, int32_t id, void* data) {
         const wifi_event_sta_connected_t& info =
             *static_cast<wifi_event_sta_connected_t*>(data);
         if (!SecurityAllows(config_.security, Auth(info.authmode))) {
+          rejected_security_ = ConnectionFailure::kIncompatibleSecurity;
           lock.unlock();
           esp_wifi_disconnect();
           return;
@@ -509,6 +541,13 @@ void Esp32Station::event(esp_event_base_t base, int32_t id, void* data) {
         memcpy(event.link.ssid.bytes, info.ssid, event.link.ssid.size);
         memcpy(event.link.bssid.bytes, info.bssid, 6);
         event.native_code = info.reason;
+        event.link.failure = rejected_security_ != ConnectionFailure::kNone
+                                 ? rejected_security_
+                                 : ClassifyDisconnect(info.reason);
+        rejected_security_ = ConnectionFailure::kNone;
+        event.link.channel = selected_.primary;
+        event.link.rssi_dbm = info.rssi;
+        event.link.has_radio_info = info.rssi != -128;
         event.status = Status::kConnectionFailed;
         break;
       }

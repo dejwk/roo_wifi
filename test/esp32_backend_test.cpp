@@ -346,4 +346,57 @@ TEST(Esp32BackendTest, CustomPreferencesBackend) {
   EXPECT_EQ(out.settings.connection.ssid.size, 12u);
   EXPECT_EQ(store.removeProfile(settings.connection.ssid), Status::kOk);
 }
+// Verifies actual IDF event translation distinguishes missing networks,
+// ambiguous authentication failures, incompatible security, and transient loss.
+TEST(Esp32BackendTest, DisconnectFailureCategories) {
+  class Receiver : public NativeStation::Receiver {
+   public:
+    void post(const NativeStation::Event& event) override {
+      roo::lock_guard<roo::mutex> lock(mutex);
+      last = event;
+    }
+    NativeStation::Event snapshot() {
+      roo::lock_guard<roo::mutex> lock(mutex);
+      return last;
+    }
+    roo::mutex mutex;
+    NativeStation::Event last{NativeStation::Event::kEnabled};
+  } receiver;
+  Esp32Station station;
+  ASSERT_EQ(station.attach(receiver), Status::kOk);
+  struct Case {
+    uint16_t reason;
+    ConnectionFailure failure;
+  };
+  const Case cases[] = {
+      {WIFI_REASON_NO_AP_FOUND, ConnectionFailure::kNetworkNotFound},
+      {WIFI_REASON_AUTH_FAIL, ConnectionFailure::kAuthentication},
+      {WIFI_REASON_4WAY_HANDSHAKE_TIMEOUT, ConnectionFailure::kAuthentication},
+      {WIFI_REASON_HANDSHAKE_TIMEOUT, ConnectionFailure::kAuthentication},
+      {WIFI_REASON_INVALID_PMKID, ConnectionFailure::kAuthentication},
+      {WIFI_REASON_NO_AP_FOUND_W_COMPATIBLE_SECURITY,
+       ConnectionFailure::kIncompatibleSecurity},
+      {WIFI_REASON_NO_AP_FOUND_IN_AUTHMODE_THRESHOLD,
+       ConnectionFailure::kIncompatibleSecurity},
+      {WIFI_REASON_CIPHER_SUITE_REJECTED,
+       ConnectionFailure::kIncompatibleSecurity},
+      {WIFI_REASON_BEACON_TIMEOUT, ConnectionFailure::kTransient},
+      {WIFI_REASON_AUTH_EXPIRE, ConnectionFailure::kTransient},
+      {WIFI_REASON_ASSOC_FAIL, ConnectionFailure::kTransient}};
+  for (const Case& c : cases) {
+    wifi_event_sta_disconnected_t event = {};
+    event.reason = c.reason;
+    event.rssi = -61;
+    ASSERT_EQ(esp_event_post(WIFI_EVENT, WIFI_EVENT_STA_DISCONNECTED, &event,
+                             sizeof(event), portMAX_DELAY),
+              ESP_OK);
+    delay(30);
+    const NativeStation::Event actual = receiver.snapshot();
+    EXPECT_EQ(actual.link.failure, c.failure) << c.reason;
+    EXPECT_EQ(actual.native_code, c.reason);
+    EXPECT_EQ(actual.link.rssi_dbm, -61);
+  }
+  station.detach();
+}
+
 }  // namespace roo_wifi

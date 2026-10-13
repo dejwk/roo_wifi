@@ -13,6 +13,19 @@ using OperationId = uint64_t;
 /// Identifies the native adapter action associated with an operation result.
 enum class OperationKind : uint8_t { kEnable, kScan, kConnect, kDisconnect };
 
+/// Classifies connection failures without exposing platform-specific numbers.
+/// Authentication failures are ambiguous and may be transient even with valid
+/// credentials. Incompatible security must never trigger a security downgrade.
+enum class ConnectionFailure : uint8_t {
+  kNone,
+  kTransient,
+  kNetworkNotFound,
+  kAuthentication,
+  kIncompatibleSecurity,
+  kConnectionTimeout,
+  kAddressTimeout
+};
+
 /// Reports the terminal result of one admitted native adapter transition.
 struct OperationResult {
   /// ID allocated when the controller started this native transition.
@@ -29,6 +42,9 @@ struct OperationResult {
 
   /// Whether @p native_code contains a platform diagnostic.
   bool has_native_code = false;
+
+  /// Portable connection failure category, independent of the native code.
+  ConnectionFailure failure = ConnectionFailure::kNone;
 };
 
 }  // namespace roo_wifi

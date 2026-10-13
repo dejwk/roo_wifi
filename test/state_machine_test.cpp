@@ -574,4 +574,27 @@ TEST(TimeoutTest, ScanTimeoutWaitsForNativeCancellation) {
   EXPECT_EQ(native.connects, 1);
 }
 
+// Verifies native failure classification and radio diagnostics survive the
+// compact event queue and the ordered operation completion.
+TEST_F(BackendTest, DisconnectPreservesFailureClassification) {
+  controller.connect(TestConfig(), {});
+  Pump(scheduler);
+  NativeStation::Event event{NativeStation::Event::kDisconnected};
+  event.link.ssid = native.last_config.ssid;
+  event.link.bssid.bytes[5] = 42;
+  event.link.channel = 11;
+  event.link.rssi_dbm = -65;
+  event.link.has_radio_info = true;
+  event.link.failure = ConnectionFailure::kAuthentication;
+  event.status = Status::kConnectionFailed;
+  event.native_code = 202;
+  native.emit(event);
+  Pump(scheduler);
+  EXPECT_EQ(controller.linkState().failure, ConnectionFailure::kAuthentication);
+  EXPECT_EQ(controller.linkState().native_code, 202);
+  EXPECT_EQ(controller.linkState().bssid.bytes[5], 42);
+  EXPECT_EQ(controller.linkState().channel, 11);
+  EXPECT_EQ(controller.linkState().rssi_dbm, -65);
+}
+
 }  // namespace roo_wifi

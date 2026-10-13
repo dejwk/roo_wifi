@@ -6,7 +6,10 @@
 
 namespace roo_wifi {
 OrderedInterface::QueuedEvent::QueuedEvent(const NativeStation::Event& event)
-    : native_code(event.native_code), kind(event.kind), status(event.status) {
+    : native_code(event.native_code),
+      failure(event.link.failure),
+      kind(event.kind),
+      status(event.status) {
   static_assert(std::is_trivially_copyable<QueuedEvent>::value,
                 "Queue assignment must preserve the active union member");
   using E = NativeStation::Event;
@@ -14,10 +17,11 @@ OrderedInterface::QueuedEvent::QueuedEvent(const NativeStation::Event& event)
       kind == E::kDisconnected) {
     ssid = event.link.ssid;
   }
-  if (kind == E::kAssociated || kind == E::kAddressReady) {
+  if (kind == E::kAssociated || kind == E::kAddressReady ||
+      kind == E::kDisconnected) {
     bssid = event.link.bssid;
   }
-  if (kind == E::kAssociated) {
+  if (kind == E::kAssociated || kind == E::kDisconnected) {
     // Explicitly begin the association member's lifetime before filling it.
     new (&payload.association) Association{};
     payload.association.station_mac = event.link.station_mac;
@@ -41,15 +45,17 @@ NativeStation::Event OrderedInterface::QueuedEvent::expand() const {
   NativeStation::Event event{kind};
   event.status = status;
   event.native_code = native_code;
+  event.link.failure = failure;
   using E = NativeStation::Event;
   if (kind == E::kAssociated || kind == E::kAddressReady ||
       kind == E::kDisconnected) {
     event.link.ssid = ssid;
   }
-  if (kind == E::kAssociated || kind == E::kAddressReady) {
+  if (kind == E::kAssociated || kind == E::kAddressReady ||
+      kind == E::kDisconnected) {
     event.link.bssid = bssid;
   }
-  if (kind == E::kAssociated) {
+  if (kind == E::kAssociated || kind == E::kDisconnected) {
     event.link.station_mac = payload.association.station_mac;
     event.link.security = payload.association.security;
     event.link.rssi_dbm = payload.association.rssi_dbm;
@@ -279,10 +285,12 @@ void OrderedInterface::startConnection() {
   }
 }
 
-void OrderedInterface::finishStation(Status error, int32_t code) {
+void OrderedInterface::finishStation(Status error, int32_t code,
+                                     ConnectionFailure failure) {
   if (station_.id == 0) return;
   OperationResult result = station_;
   result.status = cancelling_ ? Status::kCancelled : error;
+  result.failure = cancelling_ ? ConnectionFailure::kNone : failure;
   result.native_code = code;
   result.has_native_code = code != 0;
   station_ = {};
@@ -394,7 +402,15 @@ void OrderedInterface::process(const NativeStation::Event& event) {
       }
       link_.phase = LinkPhase::kIdle;
       link_.has_ipv4 = false;
-      link_.reason = event.status;
+      link_.reason = event.status == Status::kOk ? Status::kConnectionFailed
+                                                 : event.status;
+      link_.failure = event.link.failure;
+      if (event.link.has_radio_info) {
+        link_.bssid = event.link.bssid;
+        link_.channel = event.link.channel;
+        link_.rssi_dbm = event.link.rssi_dbm;
+        link_.has_radio_info = true;
+      }
       link_.native_code = event.native_code;
       link_.has_native_code = event.native_code != 0;
       sink_->onLinkChanged(link_);
@@ -405,8 +421,8 @@ void OrderedInterface::process(const NativeStation::Event& event) {
         } else if (station_.kind != OperationKind::kEnable) {
           finishStation(station_.kind == OperationKind::kDisconnect
                             ? Status::kOk
-                            : Status::kConnectionFailed,
-                        event.native_code);
+                            : link_.reason,
+                        event.native_code, event.link.failure);
         }
       }
       break;

@@ -169,6 +169,9 @@ struct LinkState {
   /// Terminal disconnect reason.
   Status reason = Status::kOk;
 
+  /// Portable category associated with the last disconnect.
+  ConnectionFailure failure = ConnectionFailure::kNone;
+
   /// Platform diagnostic code when @p has_native_code is true.
   int32_t native_code = 0;
 };
