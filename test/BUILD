@@ -91,3 +91,10 @@ cc_test(
     srcs = ["state_machine_test.cpp", "backend_fakes.h"],
     deps = ["//:roo_wifi", "@googletest//:gtest"] + TEST_MAIN_DEPS,
 )
+
+cc_test(
+    name = "retry_test",
+    size = "small",
+    srcs = ["backend_fakes.h", "retry_test.cpp"],
+    deps = ["//:roo_wifi", "@googletest//:gtest"] + TEST_MAIN_DEPS,
+)

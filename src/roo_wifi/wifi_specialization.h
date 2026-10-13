@@ -34,7 +34,8 @@ class WiFiSpecialization
   /// Creates a Wi-Fi controller using @p scheduler and @p options.
   /// Owns the platform radio and storage adapters; borrows the scheduler.
   /// @param scheduler Context on which controller calls and callbacks run.
-  /// @param options Scan capacity and native transition timeout settings.
+  /// @param options Scan capacity, native deadlines, and saved-profile retry
+  /// policy.
   explicit WiFiSpecialization(roo_scheduler::SchedulerClient& scheduler,
                               Controller::Options options = {})
       : Resources(),
@@ -46,7 +47,8 @@ class WiFiSpecialization
   /// The backend and borrowed scheduler must outlive this controller.
   /// @param scheduler Context on which controller calls and callbacks run.
   /// @param initializer Backend used to construct the platform storage adapter.
-  /// @param options Scan capacity and native transition timeout settings.
+  /// @param options Scan capacity, native deadlines, and saved-profile retry
+  /// policy.
   template <typename StoreInitializer,
             typename std::enable_if<
                 std::is_constructible<Store, StoreInitializer&&>::value,

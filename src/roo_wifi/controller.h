@@ -17,7 +17,53 @@ namespace roo_wifi {
 /// synchronous profile operations remain available until shutdown.
 class Controller : private Interface::Sink {
  public:
-  /// Configures bounded scan capacity and native transition deadlines.
+  /// Configures delays between failed saved-profile connection attempts.
+  /// The final delay repeats until intent changes. Authentication failures
+  /// enter that cooldown after three failures; incompatible security uses it
+  /// immediately. Jitter only staggers retries and is not cryptographic.
+  struct RetryOptions {
+    /// Delays in milliseconds, indexed by consecutive failure, then capped.
+    uint32_t delays_ms[6] = {500, 1000, 2000, 5000, 10000, 30000};
+
+    /// Symmetric jitter percentage, clamped to 50; zero is deterministic.
+    uint8_t jitter_percent = 20;
+
+    /// Connected time before forgetting failures and restarting the backoff.
+    uint32_t stable_connection_ms = 60000;
+  };
+
+  /// Retains the latest failed attempt while another attempt is in progress.
+  struct RetryState {
+    /// Number of native connection attempts since new intent or stable success.
+    /// Saturates instead of wrapping. Direct connections count once as well.
+    uint32_t attempt_count = 0;
+
+    /// Whether an automatic retry is scheduled.
+    bool pending = false;
+
+    /// Scheduled retry time, or Max() when no retry is pending.
+    roo_time::Uptime next_attempt = roo_time::Uptime::Max();
+
+    /// Last connection failure; cleared on new intent or sustained success.
+    Status last_status = Status::kOk;
+
+    /// Portable explanation, including connection versus address timeouts.
+    ConnectionFailure failure = ConnectionFailure::kNone;
+
+    /// Native diagnostic associated with the last failure, when available.
+    int32_t native_code = 0;
+
+    /// Whether the last failure supplied a native diagnostic.
+    bool has_native_code = false;
+
+    /// AP metadata from the failed attempt, when has_radio_info is true.
+    MacAddress bssid;
+    int8_t rssi_dbm = -128;
+    uint8_t channel = 0;
+    bool has_radio_info = false;
+  };
+
+  /// Configures bounded scan capacity, native deadlines, and automatic retries.
   struct Options {
     /// Maximum number of access-point records retained from one scan.
     /// Additional results are omitted and ScanSnapshot::truncated is set.
@@ -33,6 +79,9 @@ class Controller : private Interface::Sink {
     /// Applies to enablement, disconnection, and cancellation. If the native
     /// transition does not settle, the controller enters kFaulted.
     uint32_t transition_timeout_ms = 5000;
+
+    /// Retry policy for saved profiles whose auto_connect flag is enabled.
+    RetryOptions retry;
   };
 
   /// Selects the desired station state, independently of physical progress.
@@ -92,6 +141,9 @@ class Controller : private Interface::Sink {
 
     /// Whether native_code was supplied by the adapter.
     bool has_native_code = false;
+
+    /// Retry progress and the last failure, independent of current status.
+    RetryState retry;
 
     /// Current scan progress; cancellation stays active until native teardown.
     ScanPhase scan = ScanPhase::kIdle;
@@ -381,6 +433,16 @@ class Controller : private Interface::Sink {
   /// Restores the last successful profile only when auto-connect is enabled.
   void restoreProfile();
 
+  /// Retains a failure and schedules retry when policy and intent allow it.
+  void connectionFailed(Status status, ConnectionFailure failure,
+                        int32_t native_code, bool has_native_code);
+
+  /// Computes a bounded, jittered delay for the current failure category.
+  uint32_t retryDelay();
+
+  /// Cancels retry work without discarding the retained failure diagnostics.
+  void cancelRetry();
+
   /// Retries the accepted profile snapshot after checking current retry policy.
   void retry();
 
@@ -435,7 +497,11 @@ class Controller : private Interface::Sink {
   bool transition_enabled_ = false;
   bool restore_profile_ = false;
   bool auto_connect_ = false;
-  bool retry_waiting_ = false;
+  uint8_t retry_level_ = 0;
+  uint32_t jitter_state_ = 1;
+  ConnectionFailure timeout_failure_ = ConnectionFailure::kNone;
+  roo_time::Uptime stable_deadline_ = roo_time::Uptime::Max();
+  roo_time::Uptime address_deadline_ = roo_time::Uptime::Max();
 };
 
 using Listener = Controller::Listener;

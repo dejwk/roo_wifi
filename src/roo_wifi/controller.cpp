@@ -44,6 +44,9 @@ Controller::Controller(Interface& interface, Store& store,
       reconnect_(scheduler, [this] { retry(); }),
       notify_(scheduler, [this] { notifyListeners(); }) {
   records_.resize(options.max_scan_results);
+  jitter_state_ = static_cast<uint32_t>(roo_time::Uptime::Now().inMicros()) ^
+                  static_cast<uint32_t>(reinterpret_cast<uintptr_t>(this));
+  if (jitter_state_ == 0) jitter_state_ = 1;
 }
 
 Controller::~Controller() { shutdown(); }
@@ -156,8 +159,10 @@ void Controller::newIntent() {
   state_.status = Status::kOk;
   state_.native_code = 0;
   state_.has_native_code = false;
-  reconnect_.cancel();
-  retry_waiting_ = false;
+  cancelRetry();
+  state_.retry = {};
+  retry_level_ = 0;
+  stable_deadline_ = address_deadline_ = roo_time::Uptime::Max();
   changed(Change::kStation);
   work_.scheduleNow();
 }
@@ -332,8 +337,64 @@ void Controller::restoreProfile() {
   }
 }
 
+void Controller::cancelRetry() {
+  reconnect_.cancel();
+  state_.retry.pending = false;
+  state_.retry.next_attempt = roo_time::Uptime::Max();
+}
+
+uint32_t Controller::retryDelay() {
+  const ConnectionFailure failure = state_.retry.failure;
+  unsigned level = retry_level_;
+  if (failure == ConnectionFailure::kIncompatibleSecurity ||
+      (failure == ConnectionFailure::kAuthentication && level >= 2)) {
+    level = 5;
+  }
+  const uint32_t base = std::max<uint32_t>(1, options_.retry.delays_ms[level]);
+  const uint32_t spread = static_cast<uint64_t>(base) *
+                          std::min<uint8_t>(50, options_.retry.jitter_percent) /
+                          100;
+  // A small per-controller generator avoids platform dependencies and global
+  // random state. Retry timing is not a source of security-sensitive entropy.
+  jitter_state_ ^= jitter_state_ << 13;
+  jitter_state_ ^= jitter_state_ >> 17;
+  jitter_state_ ^= jitter_state_ << 5;
+  const int64_t delay =
+      static_cast<int64_t>(base) - spread +
+      (static_cast<uint64_t>(jitter_state_) % (2ULL * spread + 1));
+  return static_cast<uint32_t>(std::min<int64_t>(
+      std::numeric_limits<uint32_t>::max(), std::max<int64_t>(1, delay)));
+}
+
+void Controller::connectionFailed(Status status, ConnectionFailure failure,
+                                  int32_t code, bool has_code) {
+  state_.status = status;
+  state_.native_code = code;
+  state_.has_native_code = has_code;
+  RetryState& retry = state_.retry;
+  retry.last_status = status;
+  retry.failure = failure == ConnectionFailure::kNone
+                      ? ConnectionFailure::kTransient
+                      : failure;
+  retry.native_code = code;
+  retry.has_native_code = has_code;
+  retry.bssid = state_.link.bssid;
+  retry.channel = state_.link.channel;
+  retry.rssi_dbm = state_.link.rssi_dbm;
+  retry.has_radio_info = state_.link.has_radio_info;
+  stable_deadline_ = address_deadline_ = roo_time::Uptime::Max();
+  if (auto_connect_ && state_.desired == Target::kConnected &&
+      (status == Status::kConnectionFailed || status == Status::kTimeout)) {
+    retry.pending = true;
+    retry.next_attempt =
+        roo_time::Uptime::Now() + roo_time::Millis(retryDelay());
+    if (retry_level_ < 5) ++retry_level_;
+    reconnect_.scheduleOn(retry.next_attempt);
+  }
+}
+
 void Controller::retry() {
-  retry_waiting_ = false;
+  cancelRetry();
   if (!running_ || faulted_ || state_.desired != Target::kConnected ||
       !auto_connect_) {
     return;
@@ -349,6 +410,8 @@ void Controller::retry() {
   // Keep the accepted configuration snapshot; edits apply on explicit connect.
   attempted_revision_ = 0;
   state_.status = Status::kOk;
+  state_.native_code = 0;
+  state_.has_native_code = false;
   changed(Change::kStation);
   work_.scheduleNow();
 }
@@ -383,7 +446,7 @@ void Controller::execute() {
     if (status != Status::kOk) fault(status);
     if (isScanning() || faulted_) return;
   }
-  if (needs_station && !retry_waiting_) {
+  if (needs_station && !state_.retry.pending) {
     active_revision_ = state_.revision;
     station_timed_out_ = false;
     if (state_.link.phase != LinkPhase::kIdle) {
@@ -398,6 +461,9 @@ void Controller::execute() {
       return;
     } else if (state_.desired == Target::kConnected) {
       transition_ = Transition::kConnect;
+      if (state_.retry.attempt_count != std::numeric_limits<uint32_t>::max()) {
+        ++state_.retry.attempt_count;
+      }
     } else {
       attempted_revision_ = state_.revision;
       changed(Change::kStation);
@@ -453,18 +519,35 @@ void Controller::fault(Status status) {
   transition_ = Transition::kNone;
   credentials_ = {};
   timer_.cancel();
-  reconnect_.cancel();
+  cancelRetry();
+  stable_deadline_ = address_deadline_ = roo_time::Uptime::Max();
   changed(Change::kStation);
 }
 
 void Controller::checkTimeouts() {
   if (!running_ || faulted_) return;
-  if (station_id_ != 0 && roo_time::Uptime::Now() >= station_deadline_) {
+  const roo_time::Uptime now = roo_time::Uptime::Now();
+  if (now >= stable_deadline_) {
+    stable_deadline_ = roo_time::Uptime::Max();
+    state_.retry = {};
+    retry_level_ = 0;
+    changed(Change::kStation);
+  }
+  if (now >= address_deadline_) {
+    address_deadline_ = roo_time::Uptime::Max();
+    connectionFailed(Status::kTimeout, ConnectionFailure::kAddressTimeout, 0,
+                     false);
+    changed(Change::kStation);
+  }
+  if (station_id_ != 0 && now >= station_deadline_) {
     if (transition_ != Transition::kConnect || cancelling_connect_) {
       fault(Status::kTimeout);
       return;
     }
     station_timed_out_ = true;
+    timeout_failure_ = state_.link.phase == LinkPhase::kAssociated
+                           ? ConnectionFailure::kAddressTimeout
+                           : ConnectionFailure::kConnectionTimeout;
     Status status = interface_.cancelConnect();
     if (status != Status::kOk) {
       fault(Status::kTimeout);
@@ -490,8 +573,9 @@ void Controller::checkTimeouts() {
 }
 
 void Controller::scheduleTimeouts() {
-  roo_time::Uptime deadline = roo_time::Uptime::Max();
-  if (station_id_ != 0) deadline = station_deadline_;
+  roo_time::Uptime deadline = std::min(stable_deadline_, address_deadline_);
+  if (station_id_ != 0 && station_deadline_ < deadline)
+    deadline = station_deadline_;
   if (scan_id_ != 0 && scan_deadline_ < deadline) deadline = scan_deadline_;
   if (deadline == roo_time::Uptime::Max()) {
     timer_.cancel();
@@ -556,10 +640,11 @@ void Controller::onOperationFinished(const OperationResult& result) {
     if (completed == Transition::kConnect || status != Status::kOk) {
       attempted_revision_ = state_.revision;
     }
-    if (completed == Transition::kConnect &&
-        status == Status::kConnectionFailed && auto_connect_) {
-      retry_waiting_ = true;
-      reconnect_.scheduleAfter(roo_time::Seconds(5));
+    if (completed == Transition::kConnect && status != Status::kOk &&
+        status != Status::kCancelled) {
+      connectionFailed(status,
+                       station_timed_out_ ? timeout_failure_ : result.failure,
+                       result.native_code, result.has_native_code);
     }
   }
   changed(Change::kStation);
@@ -580,21 +665,47 @@ void Controller::onLinkChanged(const LinkState& link) {
         link.connection_id == station_id_)) {
     return;
   }
+  const LinkPhase previous = state_.link.phase;
   state_.link = link;
-  if (link.phase == LinkPhase::kIdle) {
-    state_.connected_profile = {};
-    if (transition_ == Transition::kNone &&
-        state_.desired == Target::kConnected) {
-      state_.status =
-          link.reason == Status::kOk ? Status::kConnectionFailed : link.reason;
+  const roo_time::Uptime now = roo_time::Uptime::Now();
+  if (link.phase == LinkPhase::kAddressReady) {
+    address_deadline_ = roo_time::Uptime::Max();
+    if (previous != LinkPhase::kAddressReady) {
+      stable_deadline_ =
+          now + roo_time::Millis(options_.retry.stable_connection_ms);
     }
-    if (transition_ == Transition::kNone && auto_connect_ &&
+    // DHCP can recover while waiting to retry. Keep that recovered link.
+    if (transition_ == Transition::kNone &&
+        (state_.retry.pending ||
+         (previous != LinkPhase::kAddressReady &&
+          state_.retry.failure == ConnectionFailure::kAddressTimeout))) {
+      cancelRetry();
+      attempted_revision_ = state_.revision;
+      state_.status = Status::kOk;
+      state_.has_native_code = false;
+      state_.native_code = 0;
+    }
+  } else {
+    stable_deadline_ = roo_time::Uptime::Max();
+    if (previous == LinkPhase::kAddressReady &&
+        link.phase == LinkPhase::kAssociated &&
+        transition_ == Transition::kNone) {
+      address_deadline_ = now + roo_time::Millis(options_.connect_timeout_ms);
+    }
+  }
+  if (link.phase == LinkPhase::kIdle) {
+    address_deadline_ = roo_time::Uptime::Max();
+    state_.connected_profile = {};
+    if (transition_ == Transition::kNone && previous != LinkPhase::kIdle &&
         state_.desired == Target::kConnected) {
-      retry_waiting_ = true;
-      reconnect_.scheduleAfter(roo_time::Seconds(1));
+      const Status status =
+          link.reason == Status::kOk ? Status::kConnectionFailed : link.reason;
+      connectionFailed(status, link.failure, link.native_code,
+                       link.has_native_code);
     }
   }
   changed(Change::kStation);
+  scheduleTimeouts();
 }
 
 }  // namespace roo_wifi
