@@ -399,4 +399,122 @@ TEST(Esp32BackendTest, DisconnectFailureCategories) {
   station.detach();
 }
 
+// Verifies a retry reuses a recent selection once, then chooses another AP
+// after repeated authentication failures; direct calls remain single-attempt.
+TEST(Esp32BackendTest, CachedCandidatesRetryThenFallBack) {
+  using namespace roo_testing_transducers::wifi;
+  auto environment = std::make_shared<Environment>();
+  environment->setScanDurationMs(20);
+  for (uint8_t i = 1; i <= 2; ++i) {
+    auto ap = std::make_unique<AccessPoint>(
+        roo_testing_transducers::wifi::MacAddress(2, 0, 0, 0, 0, i),
+        "fallback");
+    ap->setRSSI(RSSI(i == 1 ? -40 : -65));
+    environment->addAccessPoint(std::move(ap));
+  }
+  ConnectionAttempt failure;
+  failure.outcome = ConnectionOutcome::kAuthenticationFailure;
+  environment->queueConnectionAttempt(failure);
+  environment->queueConnectionAttempt(failure);
+  FakeEsp32().setWifiEnvironment(environment);
+  roo_scheduler::SchedulingService scheduler;
+  Esp32IdfInterface radio;
+  MemoryStore store;
+  store.enabled = true;
+  Controller controller(radio, store, scheduler);
+  ASSERT_EQ(controller.begin(), Status::kOk);
+  scheduler.delay(roo_time::Millis(100));
+  for (int attempt = 0; attempt < 3; ++attempt) {
+    ASSERT_EQ(controller.connect(TestConfig("fallback"), {}), Status::kOk);
+    scheduler.delay(roo_time::Millis(150));
+    wifi_config_t config = {};
+    ASSERT_EQ(esp_wifi_get_config(WIFI_IF_STA, &config), ESP_OK);
+    EXPECT_EQ(config.sta.bssid[5], attempt < 2 ? 1 : 2);
+    if (attempt < 2) {
+      EXPECT_EQ(controller.state().status, Status::kConnectionFailed);
+      EXPECT_FALSE(controller.state().retry.pending);
+    } else {
+      EXPECT_EQ(controller.state().station,
+                Controller::StationPhase::kConnected);
+    }
+    // A new scan cannot finish inside the subsequent 150 ms window. Success
+    // above therefore demonstrates reuse through the real ordered adapter.
+    environment->setScanDurationMs(2000);
+  }
+}
+
+// Verifies expired candidate data triggers discovery and can select a newly
+// stronger AP rather than keeping the previous BSSID indefinitely.
+TEST(Esp32BackendTest, ExpiredCandidatesRefreshSelection) {
+  using namespace roo_testing_transducers::wifi;
+  auto environment = std::make_shared<Environment>();
+  environment->setScanDurationMs(20);
+  const roo_testing_transducers::wifi::MacAddress first(2, 0, 0, 0, 0, 1);
+  const roo_testing_transducers::wifi::MacAddress second(2, 0, 0, 0, 0, 2);
+  auto ap = std::make_unique<AccessPoint>(first, "refresh");
+  ap->setRSSI(RSSI(-40));
+  environment->addAccessPoint(std::move(ap));
+  ap = std::make_unique<AccessPoint>(second, "refresh");
+  ap->setRSSI(RSSI(-65));
+  environment->addAccessPoint(std::move(ap));
+  FakeEsp32().setWifiEnvironment(environment);
+  roo_scheduler::SchedulingService scheduler;
+  Esp32Station::SelectionOptions selection;
+  selection.cache_lifetime_ms = 50;
+  Esp32IdfInterface radio(selection);
+  MemoryStore store;
+  store.enabled = true;
+  Controller controller(radio, store, scheduler);
+  ASSERT_EQ(controller.begin(), Status::kOk);
+  scheduler.delay(roo_time::Millis(100));
+  ASSERT_EQ(controller.connect(TestConfig("refresh"), {}), Status::kOk);
+  scheduler.delay(roo_time::Millis(150));
+  ASSERT_EQ(controller.linkState().bssid.bytes[5], 1);
+  ASSERT_EQ(controller.disconnect(), Status::kOk);
+  scheduler.delay(roo_time::Millis(50));
+  environment->scheduleRSSI(first, RSSI(-80), 0);
+  ASSERT_EQ(controller.connect(TestConfig("refresh"), {}), Status::kOk);
+  scheduler.delay(roo_time::Millis(150));
+  EXPECT_EQ(controller.linkState().phase, LinkPhase::kAddressReady);
+  EXPECT_EQ(controller.linkState().bssid.bytes[5], 2);
+}
+
+// Verifies missing APs are skipped immediately and cooldowns survive a fresh
+// scan, preventing repeated selection of an AP that just failed discovery.
+TEST(Esp32BackendTest, MissingCandidatesAreCooledAcrossRescans) {
+  using namespace roo_testing_transducers::wifi;
+  auto environment = std::make_shared<Environment>();
+  environment->setScanDurationMs(20);
+  auto ap = std::make_unique<AccessPoint>(
+      roo_testing_transducers::wifi::MacAddress(2, 0, 0, 0, 0, 9), "absent");
+  environment->addAccessPoint(std::move(ap));
+  ConnectionAttempt missing;
+  missing.outcome = ConnectionOutcome::kNoAccessPoint;
+  environment->queueConnectionAttempt(missing);
+  FakeEsp32().setWifiEnvironment(environment);
+  roo_scheduler::SchedulingService scheduler;
+  Esp32Station::SelectionOptions selection;
+  selection.failure_cooldown_ms = 400;
+  Esp32IdfInterface radio(selection);
+  MemoryStore store;
+  store.enabled = true;
+  Controller controller(radio, store, scheduler);
+  controller.begin();
+  scheduler.delay(roo_time::Millis(100));
+  controller.connect(TestConfig("absent"), {});
+  scheduler.delay(roo_time::Millis(100));
+  EXPECT_EQ(controller.state().status, Status::kConnectionFailed);
+  controller.connect(TestConfig("absent"), {});
+  scheduler.delay(roo_time::Millis(100));
+  // The automatic simulated outcome would succeed if an actual native connect
+  // occurred. While cooling, the rescan must finish without reconnecting.
+  EXPECT_EQ(controller.state().status, Status::kConnectionFailed);
+  EXPECT_EQ(controller.linkState().failure,
+            roo_wifi::ConnectionFailure::kTransient);
+  scheduler.delay(roo_time::Millis(350));
+  controller.connect(TestConfig("absent"), {});
+  scheduler.delay(roo_time::Millis(150));
+  EXPECT_EQ(controller.state().station, Controller::StationPhase::kConnected);
+}
+
 }  // namespace roo_wifi

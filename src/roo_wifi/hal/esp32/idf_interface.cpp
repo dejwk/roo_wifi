@@ -212,6 +212,8 @@ void Esp32Station::detach() {
   wifi_handler_ = ip_handler_ = nullptr;
   owner = nullptr;
   selecting_ = scan_active_ = false;
+  candidate_count_ = 0;
+  attempt_active_ = false;
   secret_ = {};
   esp_wifi_disconnect();
 }
@@ -238,6 +240,11 @@ Support Esp32Station::support() const {
 }
 
 Status Esp32Station::enable(bool enabled) {
+  if (!enabled) {
+    roo::lock_guard<roo::mutex> lock(mutex_);
+    candidate_count_ = 0;
+    attempt_active_ = false;
+  }
   wifi_mode_t mode;
   if (esp_wifi_get_mode(&mode) != ESP_OK) {
     return Status::kConnectionFailed;
@@ -313,8 +320,16 @@ Status Esp32Station::connect(const ConnectionConfig& config,
   if (memchr(config.ssid.bytes, 0, config.ssid.size) != nullptr)
     return Status::kUnsupported;
   rejected_security_ = ConnectionFailure::kNone;
+  if (config_.ssid != config.ssid || config_.security != config.security ||
+      config_.hidden != config.hidden) {
+    candidate_count_ = 0;
+  }
   config_ = config;
   secret_ = secret;
+  if (roo_time::Uptime::Now() < candidates_expire_ && selectCandidate()) {
+    receiver_->post({Event::kPrepared});
+    return Status::kOk;
+  }
   uint8_t ssid[33] = {};
   memcpy(ssid, config.ssid.bytes, config.ssid.size);
   wifi_scan_config_t scan = {};
@@ -343,6 +358,7 @@ Status Esp32Station::continueConnect() {
 
 Status Esp32Station::disconnect() {
   roo::unique_lock<roo::mutex> lock(mutex_);
+  attempt_active_ = false;
   if (prepared_) {
     prepared_ = false;
     secret_ = {};
@@ -367,6 +383,88 @@ Status Esp32Station::readScan(ScanRecord* out, size_t capacity,
   std::copy_n(records_.begin(), count, out);
   result = {count, truncated_ || count < records_.size()};
   return Status::kOk;
+}
+
+bool Esp32Station::selectCandidate() {
+  const roo_time::Uptime now = roo_time::Uptime::Now();
+  for (size_t i = 0; i < candidate_count_; ++i) {
+    Candidate& candidate = candidates_[i];
+    if (candidate.retry_after > now) continue;
+    if (candidate.failures >= 2) candidate.failures = 0;
+    selected_ = {};
+    memcpy(selected_.bssid, candidate.bssid, 6);
+    selected_.primary = candidate.channel;
+    selected_.rssi = candidate.rssi;
+    selected_.authmode = candidate.auth;
+    prepared_ = true;
+    return true;
+  }
+  return false;
+}
+
+void Esp32Station::rememberCandidates(const wifi_ap_record_t* aps,
+                                      size_t count) {
+  const roo_time::Uptime now = roo_time::Uptime::Now();
+  std::array<Candidate, 3> next;
+  size_t retained = 0;
+  for (size_t i = 0; i < count; ++i) {
+    const wifi_ap_record_t& ap = aps[i];
+    if (!SecurityAllows(config_.security, Auth(ap.authmode))) continue;
+    Candidate candidate;
+    memcpy(candidate.bssid, ap.bssid, 6);
+    candidate.channel = ap.primary;
+    candidate.rssi = ap.rssi;
+    candidate.auth = ap.authmode;
+    for (size_t j = 0; j < candidate_count_; ++j) {
+      const Candidate& old = candidates_[j];
+      if (memcmp(old.bssid, ap.bssid, 6) == 0 && old.auth == ap.authmode &&
+          (now < candidates_expire_ || old.retry_after > now)) {
+        candidate.failures = old.failures;
+        candidate.retry_after = old.retry_after;
+        break;
+      }
+    }
+    // Prefer eligible APs over cooling APs, then stronger reception. Inserting
+    // into three fixed slots also bounds memory for scans with many matches.
+    size_t at = 0;
+    const bool cooling = candidate.retry_after > now;
+    while (at < retained) {
+      const bool other_cooling = next[at].retry_after > now;
+      if ((!cooling && other_cooling) ||
+          (cooling == other_cooling && candidate.rssi > next[at].rssi)) {
+        break;
+      }
+      ++at;
+    }
+    if (at == next.size()) continue;
+    if (retained < next.size()) ++retained;
+    for (size_t j = retained - 1; j > at; --j) next[j] = next[j - 1];
+    next[at] = candidate;
+  }
+  candidates_ = next;
+  candidate_count_ = retained;
+  candidates_expire_ =
+      now + roo_time::Millis(selection_options_.cache_lifetime_ms);
+}
+
+void Esp32Station::candidateFailed(ConnectionFailure failure) {
+  if (!attempt_active_) return;
+  attempt_active_ = false;
+  for (size_t i = 0; i < candidate_count_; ++i) {
+    Candidate& candidate = candidates_[i];
+    if (memcmp(candidate.bssid, selected_.bssid, 6) != 0) continue;
+    if (candidate.failures < 2) ++candidate.failures;
+    if (failure == ConnectionFailure::kNetworkNotFound ||
+        failure == ConnectionFailure::kIncompatibleSecurity) {
+      candidate.failures = 2;
+    }
+    if (candidate.failures >= 2) {
+      candidate.retry_after =
+          roo_time::Uptime::Now() +
+          roo_time::Millis(selection_options_.failure_cooldown_ms);
+    }
+    return;
+  }
 }
 
 Status Esp32Station::startSelected(const wifi_ap_record_t& ap) {
@@ -437,7 +535,17 @@ Status Esp32Station::startSelected(const wifi_ap_record_t& ap) {
   config.sta.pmf_cfg.required = config_.security == AuthMode::kWpa3Personal;
   Status status = Result(esp_wifi_set_config(WIFI_IF_STA, &config));
   secret_ = {};
-  return status == Status::kOk ? Result(esp_wifi_connect()) : status;
+  if (status != Status::kOk) return status;
+  {
+    roo::lock_guard<roo::mutex> lock(mutex_);
+    attempt_active_ = true;
+  }
+  status = Result(esp_wifi_connect());
+  if (status != Status::kOk) {
+    roo::lock_guard<roo::mutex> lock(mutex_);
+    candidateFailed(ConnectionFailure::kTransient);
+  }
+  return status;
 }
 
 void Esp32Station::Dispatch(void* context, esp_event_base_t base, int32_t id,
@@ -478,19 +586,18 @@ void Esp32Station::event(esp_event_base_t base, int32_t id, void* data) {
         if (selecting_) {
           selecting_ = false;
           if (!scan_cancelled_ && event.status == Status::kOk) {
-            for (size_t i = 0; i < fetched; ++i) {
-              if (!SecurityAllows(config_.security, Auth(aps[i].authmode)))
-                continue;
-              selected_ = aps[i];
-              prepared_ = true;
+            rememberCandidates(aps.data(), fetched);
+            if (selectCandidate()) {
               receiver_->post({Event::kPrepared});
               return;
             }
           }
           event.link.failure =
               event.status != Status::kOk ? ConnectionFailure::kTransient
-              : fetched == 0 ? ConnectionFailure::kNetworkNotFound
-                             : ConnectionFailure::kIncompatibleSecurity;
+              : fetched == 0              ? ConnectionFailure::kNetworkNotFound
+              : candidate_count_ != 0
+                  ? ConnectionFailure::kTransient
+                  : ConnectionFailure::kIncompatibleSecurity;
           secret_ = {};
           event.kind = Event::kDisconnected;
           event.link.ssid = config_.ssid;
@@ -545,9 +652,16 @@ void Esp32Station::event(esp_event_base_t base, int32_t id, void* data) {
                                  ? rejected_security_
                                  : ClassifyDisconnect(info.reason);
         rejected_security_ = ConnectionFailure::kNone;
+        candidateFailed(event.link.failure);
+        const uint8_t empty_bssid[6] = {};
+        if (memcmp(info.bssid, empty_bssid, 6) == 0) {
+          memcpy(event.link.bssid.bytes, selected_.bssid, 6);
+        }
         event.link.channel = selected_.primary;
-        event.link.rssi_dbm = info.rssi;
-        event.link.has_radio_info = info.rssi != -128;
+        event.link.rssi_dbm =
+            info.rssi < 0 && info.rssi > -128 ? info.rssi : selected_.rssi;
+        event.link.has_radio_info =
+            event.link.rssi_dbm < 0 && event.link.rssi_dbm > -128;
         event.status = Status::kConnectionFailed;
         break;
       }
@@ -567,6 +681,13 @@ void Esp32Station::event(esp_event_base_t base, int32_t id, void* data) {
         current_ip.ip.addr != info.ip_info.ip.addr ||
         memcmp(current_ap.bssid, selected_.bssid, 6) != 0) {
       return;
+    }
+    attempt_active_ = false;
+    for (size_t i = 0; i < candidate_count_; ++i) {
+      if (memcmp(candidates_[i].bssid, current_ap.bssid, 6) == 0) {
+        candidates_[i].failures = 0;
+        candidates_[i].retry_after = roo_time::Uptime::Start();
+      }
     }
     event.link.ssid = Record(current_ap).ssid;
     memcpy(event.link.bssid.bytes, current_ap.bssid, 6);

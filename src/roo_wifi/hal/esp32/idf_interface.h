@@ -8,8 +8,21 @@ namespace roo_wifi {
 /// Drives the ESP32 station through ESP-IDF APIs.
 class Esp32Station : public NativeStation {
  public:
-  /// Creates an unattached ESP32 station driver.
+  /// Bounds reuse of the three strongest compatible AP candidates.
+  struct SelectionOptions {
+    /// Maximum age of scan candidates reused by a subsequent connection.
+    uint32_t cache_lifetime_ms = 30000;
+
+    /// Time to avoid an AP after two failures or an explicit absence/rejection.
+    uint32_t failure_cooldown_ms = 30000;
+  };
+
+  /// Creates an unattached ESP32 station with default candidate lifetimes.
   Esp32Station() = default;
+
+  /// Creates an unattached station with the supplied candidate lifetimes.
+  explicit Esp32Station(SelectionOptions options)
+      : selection_options_(options) {}
 
   /// Destroys the station driver after detaching it from ESP event delivery.
   ~Esp32Station() override;
@@ -55,6 +68,27 @@ class Esp32Station : public NativeStation {
                   ScanRead& result) const override;
 
  private:
+  /// Keeps only connection-selection metadata, never credential material.
+  struct Candidate {
+    roo_time::Uptime retry_after;
+    uint8_t bssid[6] = {};
+    uint8_t channel = 0;
+    int8_t rssi = -128;
+    wifi_auth_mode_t auth = WIFI_AUTH_OPEN;
+    uint8_t failures = 0;
+  };
+
+  static_assert(sizeof(Candidate) <= 24, "AP candidate RAM budget");
+
+  /// Prepares the strongest cached candidate whose cooldown has expired.
+  bool selectCandidate();
+
+  /// Refreshes bounded candidates while retaining recent BSSID penalties.
+  void rememberCandidates(const wifi_ap_record_t* aps, size_t count);
+
+  /// Records failure of the selected AP without affecting deliberate teardown.
+  void candidateFailed(ConnectionFailure failure);
+
   /// Forwards an ESP event callback to its station instance.
   static void Dispatch(void*, esp_event_base_t, int32_t, void*);
 
@@ -71,6 +105,12 @@ class Esp32Station : public NativeStation {
   bool scan_active_ = false;
   bool scan_cancelled_ = false;
   bool prepared_ = false;
+  bool attempt_active_ = false;
+  SelectionOptions selection_options_;
+  std::array<Candidate, 3> candidates_;
+  size_t candidate_count_ = 0;
+  roo_time::Uptime candidates_expire_;
+
   ConnectionFailure rejected_security_ = ConnectionFailure::kNone;
   wifi_ap_record_t selected_ = {};
   ConnectionConfig config_;
@@ -86,6 +126,11 @@ class Esp32IdfInterface : private Esp32Station, public OrderedInterface {
  public:
   /// Creates the station driver and its ordered interface.
   Esp32IdfInterface() : OrderedInterface(static_cast<Esp32Station&>(*this)) {}
+
+  /// Creates the adapter with explicit AP cache and failure cooldown lifetimes.
+  explicit Esp32IdfInterface(Esp32Station::SelectionOptions options)
+      : Esp32Station(options),
+        OrderedInterface(static_cast<Esp32Station&>(*this)) {}
 
   /// Destroys the ESP-IDF radio adapter.
   /// Shuts down ordered dispatch before destroying the station driver.
