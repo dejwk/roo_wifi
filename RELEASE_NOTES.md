@@ -1,3 +1,14 @@
+# roo_wifi 3.1.0
+
+- Added configurable automatic reconnection backoff for saved profiles, with delays from 0.5 to 30 seconds, jitter, and reset after sustained success. Direct connections remain single-attempt.
+- Added portable connection-failure categories and `state().retry` diagnostics, including attempt counts, retry timing, native errors, and access-point details.
+- Improved recovery from connection and DHCP timeouts, waiting for native cancellation before retrying.
+- Reduced ESP32 selection scans by caching up to three compatible access points and temporarily avoiding repeatedly failing candidates.
+- Fixed ESP32 connections affected by persisted long-range-only mode, mixed WPA/WPA2 and WPA2/WPA3 authentication thresholds, and WPA3 H2E configuration.
+- Expanded reconnection documentation and regression coverage.
+
+---
+
 # roo_wifi 3.0.0
 
 - **Breaking:** Replaced operation IDs and completion callbacks with an asynchronous state machine: latest accepted intent wins, commands return admission status, and coalesced listeners report state changes. Scanning now uses `startScan()`/`cancelScan()`; profile writes return storage results synchronously.
