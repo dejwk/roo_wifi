@@ -58,6 +58,35 @@ TEST(Esp32BackendTest, EnableWhileSchedulerWaits) {
   controller.shutdown();
 }
 
+// Verifies enabling Wi-Fi repairs inherited LR-only mode while preserving
+// protocol selections that already support ordinary access points.
+TEST(Esp32BackendTest, EnableReplacesLongRangeOnlyProtocol) {
+  roo_scheduler::SchedulingService scheduler;
+  Esp32IdfInterface radio;
+  MemoryStore store;
+  Controller controller(radio, store, scheduler);
+  ASSERT_EQ(controller.begin(), Status::kOk);
+  scheduler.delay(roo_time::Millis(50));
+  const uint8_t standard =
+      WIFI_PROTOCOL_11B | WIFI_PROTOCOL_11G | WIFI_PROTOCOL_11N;
+  for (uint8_t initial :
+       {static_cast<uint8_t>(WIFI_PROTOCOL_LR),
+        static_cast<uint8_t>(WIFI_PROTOCOL_11G | WIFI_PROTOCOL_11N),
+        static_cast<uint8_t>(standard | WIFI_PROTOCOL_LR)}) {
+    // Model the protocol bitmap restored by IDF from an earlier application.
+    ASSERT_EQ(esp_wifi_set_protocol(WIFI_IF_STA, initial), ESP_OK);
+    ASSERT_EQ(controller.setEnabled(true), Status::kOk);
+    scheduler.delay(roo_time::Millis(50));
+    ASSERT_TRUE(controller.isEnabled());
+    uint8_t actual = 0;
+    ASSERT_EQ(esp_wifi_get_protocol(WIFI_IF_STA, &actual), ESP_OK);
+    EXPECT_EQ(actual, initial == WIFI_PROTOCOL_LR ? standard : initial);
+    ASSERT_EQ(controller.setEnabled(false), Status::kOk);
+    scheduler.delay(roo_time::Millis(50));
+    ASSERT_FALSE(controller.isEnabled());
+  }
+}
+
 // Verifies the production radio selects exact security among same-SSID APs,
 // completes only with an address, and switches through the old disconnect.
 TEST(Esp32BackendTest, SecuritySelectionAndSwitch) {
@@ -168,10 +197,13 @@ struct NegotiationCase {
   wifi_auth_mode_t advertised;
   wifi_auth_mode_t negotiated;
   bool accepted;
+  wifi_auth_mode_t minimum;
 };
 class Esp32NegotiationTest : public ::testing::TestWithParam<NegotiationCase> {
 };
 
+// Verifies native thresholds permit every allowed constituent of a mixed
+// profile while the backend still rejects incompatible negotiated security.
 TEST_P(Esp32NegotiationTest, AcceptsOnlyCompatibleNegotiation) {
   const auto c = GetParam();
   using namespace roo_testing_transducers::wifi;
@@ -208,6 +240,10 @@ TEST_P(Esp32NegotiationTest, AcceptsOnlyCompatibleNegotiation) {
   ASSERT_EQ(controller.saveProfile(settings, update), Status::kOk);
   ASSERT_EQ(controller.connect(settings.connection.ssid), Status::kOk);
   RunBackend(scheduler);
+  wifi_config_t native_config = {};
+  ASSERT_EQ(esp_wifi_get_config(WIFI_IF_STA, &native_config), ESP_OK);
+  EXPECT_EQ(native_config.sta.sae_pwe_h2e, WPA3_SAE_PWE_BOTH);
+  EXPECT_EQ(native_config.sta.threshold.authmode, c.minimum);
   Profile persisted;
   ASSERT_EQ(controller.loadProfile(settings.connection.ssid, persisted),
             Status::kOk);
@@ -235,27 +271,27 @@ INSTANTIATE_TEST_SUITE_P(
     MixedAndStrictModes, Esp32NegotiationTest,
     ::testing::Values(
         NegotiationCase{AuthMode::kWpa2Wpa3Personal, WIFI_AUTH_WPA3_PSK,
-                        WIFI_AUTH_WPA3_PSK, true},
+                        WIFI_AUTH_WPA3_PSK, true, WIFI_AUTH_WPA3_PSK},
         NegotiationCase{AuthMode::kWpa2Wpa3Personal, WIFI_AUTH_WPA2_PSK,
-                        WIFI_AUTH_WPA2_PSK, true},
+                        WIFI_AUTH_WPA2_PSK, true, WIFI_AUTH_WPA2_PSK},
         NegotiationCase{AuthMode::kWpaWpa2Personal, WIFI_AUTH_WPA2_PSK,
-                        WIFI_AUTH_WPA2_PSK, true},
+                        WIFI_AUTH_WPA2_PSK, true, WIFI_AUTH_WPA2_PSK},
         NegotiationCase{AuthMode::kWpa2Wpa3Personal, WIFI_AUTH_WPA2_WPA3_PSK,
-                        WIFI_AUTH_WPA3_PSK, true},
+                        WIFI_AUTH_WPA3_PSK, true, WIFI_AUTH_WPA2_PSK},
         NegotiationCase{AuthMode::kWpa2Wpa3Personal, WIFI_AUTH_WPA2_WPA3_PSK,
-                        WIFI_AUTH_WPA2_PSK, true},
+                        WIFI_AUTH_WPA2_PSK, true, WIFI_AUTH_WPA2_PSK},
         NegotiationCase{AuthMode::kWpa2Wpa3Personal, WIFI_AUTH_WPA2_WPA3_PSK,
-                        WIFI_AUTH_WPA2_WPA3_PSK, true},
+                        WIFI_AUTH_WPA2_WPA3_PSK, true, WIFI_AUTH_WPA2_PSK},
         NegotiationCase{AuthMode::kWpaWpa2Personal, WIFI_AUTH_WPA_WPA2_PSK,
-                        WIFI_AUTH_WPA_PSK, true},
+                        WIFI_AUTH_WPA_PSK, true, WIFI_AUTH_WPA_PSK},
         NegotiationCase{AuthMode::kWpaWpa2Personal, WIFI_AUTH_WPA_WPA2_PSK,
-                        WIFI_AUTH_WPA2_PSK, true},
+                        WIFI_AUTH_WPA2_PSK, true, WIFI_AUTH_WPA_PSK},
         NegotiationCase{AuthMode::kWpa2Wpa3Personal, WIFI_AUTH_WPA2_WPA3_PSK,
-                        WIFI_AUTH_OPEN, false},
+                        WIFI_AUTH_OPEN, false, WIFI_AUTH_WPA2_PSK},
         NegotiationCase{AuthMode::kWpa2Wpa3Personal, WIFI_AUTH_WPA2_WPA3_PSK,
-                        WIFI_AUTH_WPA_PSK, false},
+                        WIFI_AUTH_WPA_PSK, false, WIFI_AUTH_WPA2_PSK},
         NegotiationCase{AuthMode::kWpa3Personal, WIFI_AUTH_WPA3_PSK,
-                        WIFI_AUTH_WPA2_PSK, false}));
+                        WIFI_AUTH_WPA2_PSK, false, WIFI_AUTH_WPA3_PSK}));
 
 // Verifies a second owner cannot attach to the process-global station.
 TEST(Esp32BackendTest, ExclusiveOwnership) {

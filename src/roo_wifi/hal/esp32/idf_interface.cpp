@@ -12,7 +12,7 @@ namespace roo_wifi {
 namespace {
 
 roo::mutex owner_mutex;
-Esp32Station *owner = nullptr;
+Esp32Station* owner = nullptr;
 
 /// Maps an ESP authentication mode to its portable equivalent.
 AuthMode Auth(wifi_auth_mode_t mode) {
@@ -69,9 +69,9 @@ CipherType Cipher(wifi_cipher_type_t c) {
 }
 
 /// Translates an ESP access-point record into a portable scan record.
-ScanRecord Record(const wifi_ap_record_t &ap) {
+ScanRecord Record(const wifi_ap_record_t& ap) {
   ScanRecord r;
-  r.ssid.size = strnlen(reinterpret_cast<const char *>(ap.ssid), 32);
+  r.ssid.size = strnlen(reinterpret_cast<const char*>(ap.ssid), 32);
   memcpy(r.ssid.bytes, ap.ssid, r.ssid.size);
   memcpy(r.bssid.bytes, ap.bssid, 6);
   r.security = Auth(ap.authmode);
@@ -88,14 +88,14 @@ ScanRecord Record(const wifi_ap_record_t &ap) {
 }
 
 /// Translates an ESP-IDF IPv4 address into its portable representation.
-Ipv4Address Address(const esp_ip4_addr_t &ip) {
+Ipv4Address Address(const esp_ip4_addr_t& ip) {
   const uint32_t raw = ip.addr;
   return {{static_cast<uint8_t>(raw), static_cast<uint8_t>(raw >> 8),
            static_cast<uint8_t>(raw >> 16), static_cast<uint8_t>(raw >> 24)}};
 }
 
 /// Translates a portable IPv4 address into ESP-IDF's native representation.
-esp_ip4_addr_t Address(const Ipv4Address &ip) {
+esp_ip4_addr_t Address(const Ipv4Address& ip) {
   esp_ip4_addr_t result = {};
   result.addr = static_cast<uint32_t>(ip.bytes[0]) |
                 (static_cast<uint32_t>(ip.bytes[1]) << 8) |
@@ -120,7 +120,7 @@ Status Result(esp_err_t code) {
 
 Esp32Station::~Esp32Station() { detach(); }
 
-Status Esp32Station::attach(Receiver &receiver) {
+Status Esp32Station::attach(Receiver& receiver) {
   roo::lock_guard<roo::mutex> lock(owner_mutex);
   if (owner != nullptr) return Status::kBusy;
   esp_err_t error = esp_netif_init();
@@ -225,7 +225,18 @@ Status Esp32Station::enable(bool enabled) {
     if (esp_wifi_set_mode(WIFI_MODE_STA) != ESP_OK) {
       return Status::kConnectionFailed;
     }
-    if (esp_wifi_start() != ESP_OK) {
+    // IDF restores the protocol bitmap from NVS even when subsequent settings
+    // use RAM storage. LR-only mode cannot join ordinary access points.
+    uint8_t protocols = 0;
+    esp_err_t error = esp_wifi_get_protocol(WIFI_IF_STA, &protocols);
+    if (error == ESP_OK && protocols == WIFI_PROTOCOL_LR) {
+      protocols = WIFI_PROTOCOL_11B | WIFI_PROTOCOL_11G | WIFI_PROTOCOL_11N;
+#if defined(CONFIG_SOC_WIFI_HE_SUPPORT) && CONFIG_SOC_WIFI_HE_SUPPORT
+      protocols |= WIFI_PROTOCOL_11AX;
+#endif
+      error = esp_wifi_set_protocol(WIFI_IF_STA, protocols);
+    }
+    if (error != ESP_OK || esp_wifi_start() != ESP_OK) {
       // Do not mistake a failed start for an enabled radio on the next retry.
       esp_wifi_set_mode(WIFI_MODE_NULL);
       return Status::kConnectionFailed;
@@ -268,8 +279,8 @@ Status Esp32Station::stopScan() {
   return status;
 }
 
-Status Esp32Station::connect(const ConnectionConfig &config,
-                             const Credentials &secret) {
+Status Esp32Station::connect(const ConnectionConfig& config,
+                             const Credentials& secret) {
   roo::unique_lock<roo::mutex> lock(mutex_);
   if (selecting_ || scan_active_) return Status::kBusy;
   // IDF's SSID filter is a C string, so reject unrepresentable byte SSIDs.
@@ -322,8 +333,8 @@ Status Esp32Station::disconnect() {
   return Result(esp_wifi_disconnect());
 }
 
-Status Esp32Station::readScan(ScanRecord *out, size_t capacity,
-                              ScanRead &result) const {
+Status Esp32Station::readScan(ScanRecord* out, size_t capacity,
+                              ScanRead& result) const {
   roo::unique_lock<roo::mutex> lock(mutex_);
   size_t count = std::min(capacity, records_.size());
   std::copy_n(records_.begin(), count, out);
@@ -331,7 +342,7 @@ Status Esp32Station::readScan(ScanRecord *out, size_t capacity,
   return Status::kOk;
 }
 
-Status Esp32Station::startSelected(const wifi_ap_record_t &ap) {
+Status Esp32Station::startSelected(const wifi_ap_record_t& ap) {
   uint8_t mac[6];
   memcpy(mac, device_mac_, 6);
   if (config_.mac_policy == MacPolicy::kRandomized) {
@@ -340,7 +351,7 @@ Status Esp32Station::startSelected(const wifi_ap_record_t &ap) {
   }
   if (esp_wifi_set_mac(WIFI_IF_STA, mac) != ESP_OK)
     return Status::kConnectionFailed;
-  esp_netif_t *netif = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
+  esp_netif_t* netif = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
   if (netif == nullptr) return Status::kConnectionFailed;
   esp_err_t native_status = esp_netif_dhcpc_stop(netif);
   if (native_status != ESP_OK &&
@@ -351,7 +362,7 @@ Status Esp32Station::startSelected(const wifi_ap_record_t &ap) {
   esp_netif_dns_info_t dns2 = {};
   dns1.ip.type = dns2.ip.type = ESP_IPADDR_TYPE_V4;
   if (config_.ip_mode == IpMode::kStaticIpv4) {
-    const StaticIpv4 &settings = config_.static_ipv4;
+    const StaticIpv4& settings = config_.static_ipv4;
     ip.ip = Address(settings.address);
     ip.gw = Address(settings.gateway);
     ip.netmask = Address(PrefixMask(settings.prefix_length));
@@ -368,7 +379,8 @@ Status Esp32Station::startSelected(const wifi_ap_record_t &ap) {
   if (config_.ip_mode == IpMode::kStaticIpv4 &&
       (esp_netif_set_dns_info(netif, ESP_NETIF_DNS_MAIN, &dns1) != ESP_OK ||
        (config_.static_ipv4.has_dns2 &&
-        esp_netif_set_dns_info(netif, ESP_NETIF_DNS_BACKUP, &dns2) != ESP_OK))) {
+        esp_netif_set_dns_info(netif, ESP_NETIF_DNS_BACKUP, &dns2) !=
+            ESP_OK))) {
     return Status::kConnectionFailed;
   }
   if (config_.ip_mode == IpMode::kDhcp) {
@@ -383,7 +395,17 @@ Status Esp32Station::startSelected(const wifi_ap_record_t &ap) {
   config.sta.bssid_set = true;
   memcpy(config.sta.bssid, ap.bssid, 6);
   config.sta.channel = ap.primary;
+  // IDF interprets mixed thresholds as their stronger constituent, which
+  // would reject the weaker mode explicitly allowed by a mixed profile.
   config.sta.threshold.authmode = ap.authmode;
+  if (ap.authmode == WIFI_AUTH_WPA_WPA2_PSK) {
+    config.sta.threshold.authmode = WIFI_AUTH_WPA_PSK;
+  } else if (ap.authmode == WIFI_AUTH_WPA2_WPA3_PSK) {
+    config.sta.threshold.authmode = WIFI_AUTH_WPA2_PSK;
+  }
+  // Explicitly allow both SAE derivation methods. Unspecified defaults in
+  // affected ESP-IDF releases can prevent connections to H2E-only WPA3 APs.
+  config.sta.sae_pwe_h2e = WPA3_SAE_PWE_BOTH;
   config.sta.pmf_cfg.capable = true;
   config.sta.pmf_cfg.required = config_.security == AuthMode::kWpa3Personal;
   Status status = Result(esp_wifi_set_config(WIFI_IF_STA, &config));
@@ -391,12 +413,12 @@ Status Esp32Station::startSelected(const wifi_ap_record_t &ap) {
   return status == Status::kOk ? Result(esp_wifi_connect()) : status;
 }
 
-void Esp32Station::Dispatch(void *context, esp_event_base_t base, int32_t id,
-                            void *data) {
-  static_cast<Esp32Station *>(context)->event(base, id, data);
+void Esp32Station::Dispatch(void* context, esp_event_base_t base, int32_t id,
+                            void* data) {
+  static_cast<Esp32Station*>(context)->event(base, id, data);
 }
 
-void Esp32Station::event(esp_event_base_t base, int32_t id, void *data) {
+void Esp32Station::event(esp_event_base_t base, int32_t id, void* data) {
   roo::unique_lock<roo::mutex> lock(mutex_);
   if (receiver_ == nullptr) return;
   Event event{};
@@ -412,8 +434,8 @@ void Esp32Station::event(esp_event_base_t base, int32_t id, void *data) {
       }
       case WIFI_EVENT_SCAN_DONE: {
         if (!selecting_ && !scan_active_) return;
-        const wifi_event_sta_scan_done_t &done =
-            *static_cast<wifi_event_sta_scan_done_t *>(data);
+        const wifi_event_sta_scan_done_t& done =
+            *static_cast<wifi_event_sta_scan_done_t*>(data);
         uint16_t total = 0;
         esp_wifi_scan_get_ap_num(&total);
         // Bound both user scans and internal candidate selection.
@@ -430,7 +452,8 @@ void Esp32Station::event(esp_event_base_t base, int32_t id, void *data) {
           selecting_ = false;
           if (!scan_cancelled_ && event.status == Status::kOk) {
             for (size_t i = 0; i < fetched; ++i) {
-              if (!SecurityAllows(config_.security, Auth(aps[i].authmode))) continue;
+              if (!SecurityAllows(config_.security, Auth(aps[i].authmode)))
+                continue;
               selected_ = aps[i];
               prepared_ = true;
               receiver_->post({Event::kPrepared});
@@ -455,8 +478,8 @@ void Esp32Station::event(esp_event_base_t base, int32_t id, void *data) {
         break;
       }
       case WIFI_EVENT_STA_CONNECTED: {
-        const wifi_event_sta_connected_t &info =
-            *static_cast<wifi_event_sta_connected_t *>(data);
+        const wifi_event_sta_connected_t& info =
+            *static_cast<wifi_event_sta_connected_t*>(data);
         if (!SecurityAllows(config_.security, Auth(info.authmode))) {
           lock.unlock();
           esp_wifi_disconnect();
@@ -479,8 +502,8 @@ void Esp32Station::event(esp_event_base_t base, int32_t id, void *data) {
         break;
       }
       case WIFI_EVENT_STA_DISCONNECTED: {
-        const wifi_event_sta_disconnected_t &info =
-            *static_cast<wifi_event_sta_disconnected_t *>(data);
+        const wifi_event_sta_disconnected_t& info =
+            *static_cast<wifi_event_sta_disconnected_t*>(data);
         event.kind = Event::kDisconnected;
         event.link.ssid.size = std::min<uint8_t>(info.ssid_len, 32);
         memcpy(event.link.ssid.bytes, info.ssid, event.link.ssid.size);
@@ -494,7 +517,7 @@ void Esp32Station::event(esp_event_base_t base, int32_t id, void *data) {
       }
     }
   } else if (base == IP_EVENT && id == IP_EVENT_STA_GOT_IP) {
-    const ip_event_got_ip_t &info = *static_cast<ip_event_got_ip_t *>(data);
+    const ip_event_got_ip_t& info = *static_cast<ip_event_got_ip_t*>(data);
     if (info.esp_netif != esp_netif_get_handle_from_ifkey("WIFI_STA_DEF"))
       return;
     wifi_ap_record_t current_ap = {};
@@ -528,7 +551,7 @@ void Esp32Station::event(esp_event_base_t base, int32_t id, void *data) {
   } else if (base == IP_EVENT && id == IP_EVENT_STA_LOST_IP) {
     // Loss has no connection identity. Verify current netif state; never clear
     // a newly acquired address merely because an old loss timer expired.
-    esp_netif_t *netif = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
+    esp_netif_t* netif = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
     esp_netif_ip_info_t current_ip = {};
     if (netif != nullptr &&
         esp_netif_get_ip_info(netif, &current_ip) == ESP_OK &&
