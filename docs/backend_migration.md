@@ -49,7 +49,7 @@ station transition returns Busy. Cancellation stays active until native scanning
 stops; cancelling an idle scan succeeds without another transition.
 
 ```
-roo_scheduler::Scheduler scheduler;
+roo_scheduler::SchedulingService scheduler;
 MyRadio radio;
 MyStore store;
 roo_wifi::Controller::Options options;

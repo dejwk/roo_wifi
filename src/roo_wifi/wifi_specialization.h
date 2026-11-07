@@ -36,7 +36,7 @@ class WiFiSpecialization
   /// @param scheduler Context on which controller calls and callbacks run.
   /// @param options Scan capacity, native deadlines, and saved-profile retry
   /// policy.
-  explicit WiFiSpecialization(roo_scheduler::SchedulerClient& scheduler,
+  explicit WiFiSpecialization(roo_scheduler::Scheduler& scheduler,
                               Controller::Options options = {})
       : Resources(),
         Controller(this->platform_interface_, this->platform_store_, scheduler,
@@ -53,7 +53,7 @@ class WiFiSpecialization
             typename std::enable_if<
                 std::is_constructible<Store, StoreInitializer&&>::value,
                 int>::type = 0>
-  WiFiSpecialization(roo_scheduler::SchedulerClient& scheduler,
+  WiFiSpecialization(roo_scheduler::Scheduler& scheduler,
                      StoreInitializer&& initializer,
                      Controller::Options options = {})
       : Resources(std::forward<StoreInitializer>(initializer)),

@@ -79,7 +79,7 @@ OrderedInterface::OrderedInterface(NativeStation& native) : native_(native) {}
 OrderedInterface::~OrderedInterface() { shutdown(); }
 
 Status OrderedInterface::begin(Sink& sink,
-                               roo_scheduler::SchedulerClient& scheduler) {
+                               roo_scheduler::Scheduler& scheduler) {
   if (attached_) return Status::kBusy;
   dispatch_.reset(
       new roo_scheduler::SingletonTask(scheduler, [this] { drain(); }));

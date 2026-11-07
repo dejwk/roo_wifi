@@ -6,7 +6,7 @@
 #include "roo_wifi/radio.h"
 
 namespace roo_scheduler {
-class SchedulerClient;
+class Scheduler;
 }
 
 namespace roo_wifi {
@@ -60,8 +60,7 @@ class Interface {
   /// may run on other threads, but must hand events off to this scheduler.
   /// @param sink Receiver of deferred radio events.
   /// @param scheduler Context on which events are delivered.
-  virtual Status begin(Sink& sink,
-                       roo_scheduler::SchedulerClient& scheduler) = 0;
+  virtual Status begin(Sink& sink, roo_scheduler::Scheduler& scheduler) = 0;
 
   /// Returns actual hardware support, independently of consumer presentation.
   virtual Support support() const = 0;

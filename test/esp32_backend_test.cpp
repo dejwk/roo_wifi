@@ -13,7 +13,7 @@ namespace roo_wifi {
 namespace {
 static_assert(std::is_same<WiFi, Esp32WiFi>::value,
               "ESP32 builds select Esp32WiFi as roo_wifi::WiFi");
-static_assert(std::is_constructible<Esp32WiFi, roo_scheduler::SchedulerClient&,
+static_assert(std::is_constructible<Esp32WiFi, roo_scheduler::Scheduler&,
                                     roo_prefs::Store&>::value,
               "Esp32WiFi accepts a caller-owned roo_prefs backend");
 

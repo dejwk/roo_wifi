@@ -113,7 +113,7 @@ class OrderedInterface : public Interface, private NativeStation::Receiver {
   /// Attaches an event sink and creates deferred dispatch work.
   /// @param sink Controller event recipient.
   /// @param scheduler Context used for deferred dispatch.
-  Status begin(Sink& sink, roo_scheduler::SchedulerClient& scheduler) override;
+  Status begin(Sink& sink, roo_scheduler::Scheduler& scheduler) override;
 
   /// Returns the native station's supported features.
   Support support() const override;

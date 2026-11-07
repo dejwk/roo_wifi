@@ -13,7 +13,7 @@
 
 - **Breaking:** Replaced operation IDs and completion callbacks with an asynchronous state machine: latest accepted intent wins, commands return admission status, and coalesced listeners report state changes. Scanning now uses `startScan()`/`cancelScan()`; profile writes return storage results synchronously.
 - **Breaking:** Replaced numeric profile IDs with SSIDs, allowing one saved configuration per exact SSID. Legacy profiles are ignored and must be saved again; no automatic migration is provided.
-- Updated scheduler integration to `SchedulerClient`, with examples using `SchedulingService`.
+- Updated scheduler integration to `Scheduler`, with examples using `SchedulingService`.
 - Fixed mixed WPA/WPA2 and WPA2/WPA3 authentication negotiation while preserving strict single-mode security policies.
 - Fixed ESP32 connection failures caused by writing unset DNS addresses.
 - Reduced native event queue memory usage and expanded state-machine regression tests, examples, and migration documentation.

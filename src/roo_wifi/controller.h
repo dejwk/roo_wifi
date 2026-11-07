@@ -216,7 +216,7 @@ class Controller : private Interface::Sink {
   /// @param store Storage used for profiles and persisted radio enablement.
   /// @param scheduler Context for all controller calls and notifications.
   Controller(Interface& interface, Store& store,
-             roo_scheduler::SchedulerClient& scheduler);
+             roo_scheduler::Scheduler& scheduler);
 
   /// Creates a controller using borrowed radio @p interface, profile @p store,
   /// and @p scheduler, configured by @p options.
@@ -228,7 +228,7 @@ class Controller : private Interface::Sink {
   /// @param scheduler Context for all controller calls and notifications.
   /// @param options Scan capacity and native transition timeout settings.
   Controller(Interface& interface, Store& store,
-             roo_scheduler::SchedulerClient& scheduler, Options options);
+             roo_scheduler::Scheduler& scheduler, Options options);
 
   /// Destroys the controller and shuts down its radio adapter.
   /// Detaches native callbacks and cancels notifications without calling users.
@@ -462,7 +462,7 @@ class Controller : private Interface::Sink {
 
   Interface& interface_;
   Store& store_;
-  roo_scheduler::SchedulerClient& scheduler_;
+  roo_scheduler::Scheduler& scheduler_;
   Options options_;
 
   roo_scheduler::SingletonTask work_;
