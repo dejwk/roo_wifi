@@ -1,3 +1,11 @@
+# roo_wifi 3.2.0
+
+- Wi-Fi controllers and radio backends now use `roo_scheduler::Scheduler` in place of `SchedulerClient`. The migration example uses `SchedulingService`.
+- Updated Bazel and PlatformIO dependencies to `roo_collections` 2.0.2, `roo_prefs` 2.0.4, `roo_backport` 1.3.0, and `roo_scheduler` 2.4.0. Updated Bazel testing and CI to `roo_testing` 2.7.0.
+- Added Bazel emulation configurations for ESP32-C3, ESP32-S3, and RP2040. The local test helper now selects nine profiles across Arduino, ESP-IDF, and Pico SDK.
+
+---
+
 # roo_wifi 3.1.0
 
 - Added configurable automatic reconnection backoff for saved profiles, with delays from 0.5 to 30 seconds, jitter, and reset after sustained success. Direct connections remain single-attempt.
